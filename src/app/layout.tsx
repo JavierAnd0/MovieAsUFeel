@@ -2,10 +2,9 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "MovieAsUFeel — Películas para tu estado de ánimo",
+  title: "CineMood — Sync Your Cinema Soul",
   description:
-    "Descubre películas recomendadas en base a tu historial de Letterboxd y cómo te sientes ahora mismo.",
-  keywords: ["películas", "recomendaciones", "letterboxd", "estado de ánimo", "cine"],
+    "Connect your Letterboxd and let CineMood curate your next emotional journey.",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

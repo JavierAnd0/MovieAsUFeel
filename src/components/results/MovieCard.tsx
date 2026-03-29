@@ -1,13 +1,25 @@
 import Image from "next/image";
-import Badge from "@/components/ui/Badge";
 import { posterUrl } from "@/lib/tmdb/client";
 import type { RecommendedMovie } from "@/types/recommendation";
 
 type Props = { movie: RecommendedMovie };
 
+function ScoreBadge({ score }: { score: number }) {
+  const color =
+    score >= 8 ? "#AAFF00" :
+    score >= 7 ? "#FF6B00" :
+    "#888888";
+  return (
+    <div
+      className="absolute top-2 right-2 w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold"
+      style={{ background: "rgba(0,0,0,0.75)", border: `1.5px solid ${color}`, color }}
+    >
+      {score.toFixed(1)}
+    </div>
+  );
+}
+
 export default function MovieCard({ movie }: Props) {
-  const stars = Math.round((movie.voteAverage / 2) * 10) / 10;
-  const starsDisplay = "★".repeat(Math.round(stars)) + "☆".repeat(5 - Math.round(stars));
   const imageUrl = posterUrl(movie.posterPath, "w342");
 
   return (
@@ -15,49 +27,49 @@ export default function MovieCard({ movie }: Props) {
       href={movie.tmdbUrl}
       target="_blank"
       rel="noopener noreferrer"
-      className="group flex flex-col rounded-xl border border-gray-800 bg-gray-900 overflow-hidden transition-all duration-200 hover:border-gray-700 hover:shadow-lg hover:shadow-black/30 hover:-translate-y-0.5"
+      className="group flex flex-col rounded-xl overflow-hidden transition-all duration-300 hover:-translate-y-1 hover:shadow-2xl"
+      style={{ background: "var(--bg-card)", border: "1px solid var(--border)" }}
     >
       {/* Poster */}
-      <div className="relative aspect-[2/3] w-full overflow-hidden bg-gray-800">
+      <div className="relative overflow-hidden" style={{ aspectRatio: "2/3" }}>
         {imageUrl ? (
           <Image
             src={imageUrl}
-            alt={`Poster de ${movie.title}`}
+            alt={movie.title}
             fill
-            sizes="(max-width: 640px) 50vw, (max-width: 1024px) 33vw, 25vw"
-            className="object-cover transition-transform duration-300 group-hover:scale-105"
+            sizes="(max-width:640px) 100vw, (max-width:1024px) 50vw, 20vw"
+            className="object-cover transition-transform duration-500 group-hover:scale-105"
           />
         ) : (
-          <div className="flex h-full items-center justify-center">
-            <span className="text-4xl text-gray-700">🎬</span>
+          <div className="w-full h-full flex items-center justify-center" style={{ background: "var(--bg-card2)" }}>
+            <span className="text-5xl opacity-20">🎬</span>
           </div>
         )}
+        {/* Gradient overlay at bottom */}
+        <div className="absolute bottom-0 left-0 right-0 h-20" style={{ background: "linear-gradient(to top, rgba(20,20,20,0.95) 0%, transparent 100%)" }} />
+        <ScoreBadge score={movie.voteAverage} />
       </div>
 
       {/* Info */}
-      <div className="flex flex-1 flex-col gap-2 p-3">
+      <div className="p-3 flex flex-col gap-2">
         <div>
-          <h3 className="text-sm font-semibold text-gray-100 leading-tight line-clamp-2">
+          <h3 className="text-sm font-semibold leading-tight text-white truncate">
             {movie.title}
           </h3>
-          <div className="mt-0.5 flex items-center gap-1.5 text-xs text-gray-500">
-            <span>{movie.year}</span>
-            <span>·</span>
-            <span className="text-yellow-500/80" title={`${movie.voteAverage}/10`}>
-              {starsDisplay}
-            </span>
-          </div>
-        </div>
-
-        {movie.genres.length > 0 && (
-          <div className="flex flex-wrap gap-1">
-            {movie.genres.slice(0, 2).map((g) => (
-              <Badge key={g.id}>{g.name}</Badge>
+          <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
+            <span className="text-xs" style={{ color: "var(--text-3)" }}>{movie.year}</span>
+            {movie.genres.slice(0, 2).map(g => (
+              <span
+                key={g.id}
+                className="text-xs px-1.5 py-0.5 rounded"
+                style={{ background: "rgba(255,255,255,0.06)", color: "var(--text-2)" }}
+              >
+                {g.name}
+              </span>
             ))}
           </div>
-        )}
-
-        <p className="mt-auto text-xs italic text-gray-500 leading-snug line-clamp-2">
+        </div>
+        <p className="text-xs italic leading-snug line-clamp-2" style={{ color: "var(--text-3)" }}>
           {movie.blurb}
         </p>
       </div>

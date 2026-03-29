@@ -1,16 +1,42 @@
 @import "tailwindcss";
 
 :root {
-  color-scheme: dark;
+  --bg:        #0a0a0a;
+  --bg-card:   #141414;
+  --bg-card2:  #1c1c1c;
+  --accent:    #FF6B00;
+  --accent-h:  #FF8533;
+  --border:    rgba(255,255,255,0.08);
+  --text-1:    #FFFFFF;
+  --text-2:    #888888;
+  --text-3:    #555555;
 }
 
-html {
-  scroll-behavior: smooth;
-}
+*, *::before, *::after { box-sizing: border-box; }
+
+html { scroll-behavior: smooth; }
 
 body {
-  background-color: #030712; /* gray-950 */
-  color: #f9fafb; /* gray-50 */
-  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  background-color: var(--bg);
+  color: var(--text-1);
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
   min-height: 100dvh;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Condensed impact style for big headings */
+.font-display {
+  font-family: Impact, "Arial Narrow", "Franklin Gothic Medium", sans-serif;
+  font-weight: 900;
+  letter-spacing: -0.02em;
+  text-transform: uppercase;
+}
+
+/* Section label style */
+.label-tag {
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--accent);
 }

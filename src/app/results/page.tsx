@@ -3,10 +3,11 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import MovieGrid from "@/components/results/MovieGrid";
-import ResultsHeader from "@/components/results/ResultsHeader";
+import Navbar from "@/components/layout/Navbar";
+import MovieCard from "@/components/results/MovieCard";
 import LoadingSpinner from "@/components/ui/LoadingSpinner";
 import ErrorMessage from "@/components/ui/ErrorMessage";
+import { MOOD_META } from "@/lib/mood/moodMap";
 import type { TasteProfile } from "@/types/letterboxd";
 import type { MoodCategory } from "@/types/mood";
 import type { RecommendationsResponse } from "@/types/recommendation";
@@ -24,106 +25,110 @@ export default function ResultsPage() {
 
   useEffect(() => {
     const raw = sessionStorage.getItem("movieasufeel_results");
-    if (!raw) {
-      router.replace("/");
-      return;
-    }
-    try {
-      setData(JSON.parse(raw) as StoredData);
-    } catch {
-      setError("No se pudieron cargar los resultados. Vuelve al inicio.");
-    }
+    if (!raw) { router.replace("/"); return; }
+    try { setData(JSON.parse(raw) as StoredData); }
+    catch { setError("Could not load results. Please start over."); }
   }, [router]);
 
   if (error) {
     return (
-      <main className="mx-auto max-w-2xl px-4 py-12">
+      <main className="flex min-h-screen flex-col items-center justify-center gap-4 px-4">
         <ErrorMessage message={error} />
-        <Link href="/" className="mt-4 block text-center text-sm text-indigo-400 hover:underline">
-          Volver al inicio
-        </Link>
+        <Link href="/" className="text-sm" style={{ color: "var(--accent)" }}>← Back to home</Link>
       </main>
     );
   }
 
   if (!data) {
     return (
-      <div className="flex min-h-dvh items-center justify-center">
+      <div className="flex min-h-screen items-center justify-center">
         <LoadingSpinner size={32} />
       </div>
     );
   }
 
   const { profile, moodCategories, result } = data;
-
-  if (result.movies.length === 0) {
-    return (
-      <main className="mx-auto max-w-2xl px-4 py-12 text-center">
-        <p className="text-4xl mb-4">😕</p>
-        <h2 className="text-xl font-semibold text-gray-200 mb-2">
-          Sin resultados por ahora
-        </h2>
-        <p className="text-sm text-gray-500 mb-6">
-          No encontramos suficientes películas para esta combinación. Prueba con un estado de ánimo diferente.
-        </p>
-        <Link
-          href="/"
-          className="inline-flex rounded-lg bg-indigo-600 px-5 py-2.5 text-sm font-medium text-white hover:bg-indigo-500"
-        >
-          Empezar de nuevo
-        </Link>
-      </main>
-    );
-  }
+  const moodEmojis = moodCategories.map(c => MOOD_META[c].emoji).join(" ");
 
   return (
-    <main className="mx-auto max-w-5xl px-4 py-8 sm:py-12">
-      {/* Nav */}
-      <div className="mb-6 flex items-center justify-between">
-        <Link
-          href="/"
-          className="flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-300 transition-colors"
-        >
-          <span>←</span>
-          <span
-            className="font-semibold text-gray-400"
-            style={{ fontFamily: "Georgia, 'Times New Roman', serif" }}
-          >
-            MovieAsUFeel
-          </span>
-        </Link>
-        <Link
-          href="/"
-          className="text-sm text-indigo-400 hover:text-indigo-300 transition-colors"
-        >
-          Empezar de nuevo
-        </Link>
-      </div>
+    <>
+      <Navbar />
 
-      {/* Results header */}
-      <div className="mb-6">
-        <ResultsHeader
-          profile={profile}
-          moodCategories={moodCategories}
-          result={result}
-        />
-      </div>
+      <main className="min-h-screen pt-24 pb-20 px-6">
+        <div className="mx-auto max-w-5xl">
 
-      {/* Movie grid */}
-      <MovieGrid movies={result.movies} />
+          {/* Section header — matches "TODAY'S PROJECTIONS" style */}
+          <div className="mb-8 flex items-end justify-between">
+            <div>
+              <p className="label-tag mb-2">Your Projection</p>
+              <h2 className="font-display text-4xl">
+                Today&apos;s Picks {moodEmojis}
+              </h2>
+              <p className="mt-1 text-sm" style={{ color: "var(--text-2)" }}>
+                Based on @{profile.username} · {profile.filmCount} films watched
+                {result.meta.filteredOut > 0 && ` · ${result.meta.filteredOut} already seen filtered`}
+              </p>
+            </div>
+            <Link
+              href="/"
+              className="text-xs font-semibold tracking-widest uppercase transition-colors hover:text-white"
+              style={{ color: "var(--text-3)" }}
+            >
+              ← New Session
+            </Link>
+          </div>
+
+          {/* Genre tags used */}
+          {result.meta.genresUsed.length > 0 && (
+            <div className="mb-8 flex flex-wrap gap-2">
+              {result.meta.genresUsed.map(g => (
+                <span
+                  key={g}
+                  className="px-3 py-1 rounded-full text-xs font-semibold tracking-wider uppercase"
+                  style={{ background: "rgba(255,107,0,0.1)", border: "1px solid rgba(255,107,0,0.3)", color: "var(--accent)" }}
+                >
+                  {g}
+                </span>
+              ))}
+            </div>
+          )}
+
+          {/* No results */}
+          {result.movies.length === 0 ? (
+            <div className="text-center py-24">
+              <p className="text-5xl mb-4">🎞️</p>
+              <h3 className="font-display text-2xl mb-2">No Projections Found</h3>
+              <p className="text-sm mb-8" style={{ color: "var(--text-2)" }}>
+                Try a different mood combination or make sure you have rated films on Letterboxd.
+              </p>
+              <Link
+                href="/"
+                className="rounded-full px-8 py-3 text-sm font-bold tracking-widest uppercase"
+                style={{ background: "var(--accent)", color: "#000" }}
+              >
+                Try Again
+              </Link>
+            </div>
+          ) : (
+            <div className="grid grid-cols-2 gap-5 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
+              {result.movies.map(movie => (
+                <MovieCard key={movie.tmdbId} movie={movie} />
+              ))}
+            </div>
+          )}
+        </div>
+      </main>
 
       {/* Footer */}
-      <p className="mt-10 text-center text-xs text-gray-700">
-        Datos de películas proporcionados por{" "}
-        <a
-          href="https://www.themoviedb.org"
-          target="_blank"
-          rel="noopener noreferrer"
-          className="underline hover:text-gray-500"
-        >
-          The Movie Database (TMDB)
-        </a>
-      </p>
-    </main>
+      <footer className="border-t py-8 text-center" style={{ borderColor: "var(--border)" }}>
+        <p className="font-display text-base tracking-widest mb-3" style={{ color: "var(--text-2)" }}>CineMood</p>
+        <div className="flex justify-center gap-6 mb-3">
+          {["Letterboxd", "Instagram", "Twitter", "Privacy", "Terms"].map(l => (
+            <a key={l} href="#" className="text-xs tracking-widest uppercase hover:text-white transition-colors" style={{ color: "var(--text-3)" }}>{l}</a>
+          ))}
+        </div>
+        <p className="text-xs" style={{ color: "var(--text-3)" }}>© 2025 CINEMOOD. THE DIGITAL PROJECTIONIST.</p>
+      </footer>
+    </>
   );
 }
