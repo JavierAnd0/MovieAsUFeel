@@ -18,11 +18,11 @@ export default function ResultsHeader({ profile, moodCategories, result }: Props
       <div className="flex flex-col gap-1.5 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <p className="text-lg font-semibold text-gray-100">
-            {moodEmojis} {result.movies.length} películas para ti
+            {moodEmojis} {result.movies.length} selecciones para ti
           </p>
           <p className="text-sm text-gray-500">
-            Basado en {profile.filmCount} películas vistas por @{profile.username}
-            {result.meta.filteredOut > 0 && ` · ${result.meta.filteredOut} ya vistas filtradas`}
+            Basado en tu historial de @{profile.username} · {profile.filmCount} películas vistas
+            {result.meta.filteredOut > 0 && ` · ${result.meta.filteredOut} ya vistas descartadas`}
           </p>
         </div>
         {result.meta.genresUsed.length > 0 && (

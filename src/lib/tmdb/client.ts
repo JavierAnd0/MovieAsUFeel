@@ -53,6 +53,14 @@ export async function getGenreList(): Promise<TMDBGenre[]> {
   return data.genres;
 }
 
+export async function getMovieRecommendations(id: number): Promise<TMDBDiscoverResponse> {
+  return tmdbFetch<TMDBDiscoverResponse>(`/movie/${id}/recommendations`, { page: 1 });
+}
+
+export async function getSimilarMovies(id: number): Promise<TMDBDiscoverResponse> {
+  return tmdbFetch<TMDBDiscoverResponse>(`/movie/${id}/similar`, { page: 1 });
+}
+
 export function posterUrl(path: string | null, size: "w185" | "w342" | "w500" = "w342"): string | null {
   if (!path) return null;
   return `https://image.tmdb.org/t/p/${size}${path}`;

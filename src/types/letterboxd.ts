@@ -8,6 +8,13 @@ export type WatchedFilm = {
   genreIds?: number[];
 };
 
+export type TopRatedFilm = {
+  tmdbId: number;
+  title: string;
+  rating: number;
+  genreIds: number[];
+};
+
 export type TasteProfile = {
   username: string;
   filmCount: number;
@@ -17,4 +24,5 @@ export type TasteProfile = {
   topDirectors: string[];
   watchedTmdbIds: number[];
   recentGenres: number[];
+  topRatedFilms: TopRatedFilm[];
 };

@@ -9,6 +9,7 @@ export type RecommendedMovie = {
   blurb: string;
   score: number;
   tmdbUrl: string;
+  triggeredBy?: string; // título del film del usuario que originó esta recomendación
 };
 
 export type RecommendationsResponse = {

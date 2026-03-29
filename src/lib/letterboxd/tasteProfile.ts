@@ -1,5 +1,5 @@
 import { searchMovie, getGenreList } from "@/lib/tmdb/client";
-import type { WatchedFilm, TasteProfile } from "@/types/letterboxd";
+import type { WatchedFilm, TasteProfile, TopRatedFilm } from "@/types/letterboxd";
 import type { TMDBGenre } from "@/types/tmdb";
 
 async function enrichWithTMDB(films: WatchedFilm[]): Promise<WatchedFilm[]> {
@@ -89,15 +89,28 @@ export async function buildTasteProfile(
     .filter((f) => f.tmdbId !== undefined)
     .map((f) => f.tmdbId as number);
 
+  // Top 5 films best rated by the user (with TMDB data available)
+  const topRatedFilms: TopRatedFilm[] = enriched
+    .filter((f) => f.tmdbId !== undefined && f.rating !== undefined && (f.genreIds?.length ?? 0) > 0)
+    .sort((a, b) => (b.rating ?? 0) - (a.rating ?? 0))
+    .slice(0, 5)
+    .map((f) => ({
+      tmdbId: f.tmdbId as number,
+      title: f.title,
+      rating: f.rating as number,
+      genreIds: f.genreIds ?? [],
+    }));
+
   return {
     username,
     filmCount: films.length,
     avgRating: Math.round(avgRating * 10) / 10,
     ratingBias,
     topGenres: topGenres.slice(0, 10),
-    topDirectors: [], // Directors would require credits API — omit for now
+    topDirectors: [],
     watchedTmdbIds,
     recentGenres,
+    topRatedFilms,
   };
 }
 
