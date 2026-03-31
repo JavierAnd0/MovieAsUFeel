@@ -1,11 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
-import { generateRecommendations } from "@/lib/engine/recommendationEngine";
-import type { TasteProfile } from "@/types/letterboxd";
-import type { MoodInput } from "@/types/mood";
+import { mlRecommend }              from "@/lib/engine/mlEngine";
+import { generateRecommendations }  from "@/lib/engine/recommendationEngine";
+import type { TasteProfile }        from "@/types/letterboxd";
+import type { MoodInput }           from "@/types/mood";
 
 type RequestBody = {
   tasteProfile: TasteProfile;
-  moodInput: MoodInput;
+  moodInput:    MoodInput;
 };
 
 export async function POST(req: NextRequest) {
@@ -32,8 +33,18 @@ export async function POST(req: NextRequest) {
   }
 
   try {
+    // ── ML engine (SVD collaborative filtering) ──────────────────────────────
+    // Uses pre-trained movie latent vectors from ml/data/artifacts/.
+    // Returns null when artifacts aren't ready or user has too few ratings.
+    const mlResult = mlRecommend(body.tasteProfile, body.moodInput);
+    if (mlResult) {
+      return NextResponse.json({ ...mlResult, engine: "ml" });
+    }
+
+    // ── Fallback: TMDB taste-first engine ────────────────────────────────────
     const result = await generateRecommendations(body.tasteProfile, body.moodInput);
-    return NextResponse.json(result);
+    return NextResponse.json({ ...result, engine: "tmdb" });
+
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unknown error";
     return NextResponse.json({ error: message }, { status: 500 });

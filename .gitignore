@@ -30,8 +30,20 @@ yarn-error.log*
 .env
 .env*.local
 
-# vercel
-.vercel
+# ML pipeline — data files (large, generated locally)
+ml/data/movielens/
+ml/data/tmdb_catalog.json
+ml/data/*.zip
+ml/data/artifacts/movie_vectors.json
+ml/data/artifacts/catalog_meta.json
+ml/data/artifacts/model_info.json
+# Python
+ml/venv/
+ml/__pycache__/
+ml/scripts/__pycache__/
+ml/.env
+*.pyc
+
 
 # typescript
 *.tsbuildinfo
