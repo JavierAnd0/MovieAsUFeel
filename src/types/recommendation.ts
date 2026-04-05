@@ -9,6 +9,7 @@ export type RecommendedMovie = {
   blurb: string;
   score: number;
   tmdbUrl: string;
+  alreadySeen: boolean;
 };
 
 export type RecommendationsResponse = {

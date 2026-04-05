@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__claude_ai_Figma__get_metadata",
+      "mcp__claude_ai_Figma__get_design_context",
+      "mcp__claude_ai_Figma__use_figma",
+      "mcp__claude_ai_Figma__get_screenshot",
+      "Bash(npm run:*)",
+      "mcp__Claude_Preview__preview_start",
+      "Bash(python3 -c \"import sys; html=sys.stdin.read\\(\\); print\\(html[2000:5000]\\)\")",
+      "Bash(find C:/Users/logij/MovieAsUFeel/.next -name *.html)",
+      "Bash(npx tsc:*)",
+      "WebFetch(domain:www.cosmos.so)",
+      "WebSearch",
+      "WebFetch(domain:hero.gallery)",
+      "WebFetch(domain:v0.app)"
+    ]
+  }
+}
