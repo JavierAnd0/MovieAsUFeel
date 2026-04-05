@@ -2,6 +2,7 @@ import { fetchDiscoverCandidates } from "@/lib/tmdb/discover";
 import { getGenreList } from "@/lib/tmdb/client";
 import { MOOD_MAP } from "@/lib/mood/moodMap";
 import { analyzeText } from "@/lib/mood/textAnalyzer";
+import { analyzeTextWithAI } from "@/lib/mood/aiTextAnalyzer";
 import type { TasteProfile } from "@/types/letterboxd";
 import type { MoodInput, MoodSignal } from "@/types/mood";
 import type { TMDBMovie, DiscoverParams } from "@/types/tmdb";
@@ -32,16 +33,22 @@ function mergeMoodSignals(signals: MoodSignal[]): MoodSignal {
 
 function resolveQueryGenres(
   tasteGenreIds: number[],
-  moodGenreIds: number[]
+  moodGenreIds: number[],
+  explicitGenreIds: number[] = []
 ): number[] {
-  const intersection = tasteGenreIds.filter((id) => moodGenreIds.includes(id));
+  // Explicit text genres always come first — user said it, it must be honoured
+  const fixed    = [...new Set(explicitGenreIds)].slice(0, 2);
+  const pool     = moodGenreIds.filter((id) => !fixed.includes(id));
+  const slots    = Math.max(0, 3 - fixed.length);
 
-  if (intersection.length >= 2) return intersection.slice(0, 3);
-  if (intersection.length === 1) {
-    const extras = moodGenreIds.filter((id) => !intersection.includes(id)).slice(0, 2);
-    return [intersection[0], ...extras];
-  }
-  return moodGenreIds.slice(0, 3);
+  if (slots === 0) return fixed;
+
+  const intersection = tasteGenreIds.filter((id) => pool.includes(id));
+  const fill = intersection.length >= 1
+    ? intersection.slice(0, slots)
+    : pool.slice(0, slots);
+
+  return [...fixed, ...fill];
 }
 
 /**
@@ -60,6 +67,7 @@ function scoreMovie(
   movie: TMDBMovie,
   tasteProfile: TasteProfile,
   moodGenres: number[],
+  textGenreIds: number[] = [],
 ): number {
   // ── 1. Vote quality (30%) ────────────────────────────────────────────────
   const biasBaseline = tasteProfile.ratingBias === "picky"    ? 6.0
@@ -96,12 +104,22 @@ function scoreMovie(
   // ── 4. Popularity (15%) ──────────────────────────────────────────────────
   const popularityScore = Math.min(1, Math.log10(Math.max(1, movie.popularity)) / 3);
 
-  return (
-    voteScore      * 0.30 +
-    genreAffinity  * 0.35 +
-    moodAlignment  * 0.20 +
-    popularityScore * 0.15
-  );
+  // Text genre boost: movies matching explicitly requested genres get a strong bonus
+  // so they surface even when the user's taste profile doesn't normally include them
+  const textMatches  = textGenreIds.length > 0
+    ? movie.genre_ids.filter((id) => textGenreIds.includes(id)).length
+    : 0;
+  const textBoost    = textGenreIds.length > 0
+    ? Math.min(0.25, textMatches * 0.25)
+    : 0;
+
+  const baseScore =
+    voteScore      * 0.27 +
+    genreAffinity  * 0.30 +
+    moodAlignment  * 0.18 +
+    popularityScore * 0.12;
+
+  return Math.min(1, baseScore + textBoost);
 }
 
 function buildBlurb(
@@ -162,14 +180,24 @@ export async function generateRecommendations(
   const signals    = moodInput.categories.map((cat) => MOOD_MAP[cat]);
   let moodSignal   = mergeMoodSignals(signals);
 
-  const textBoosts = moodInput.freeText
-    ? analyzeText(moodInput.freeText)
-    : { genreIds: [], overrides: {} };
+  // AI-powered text analysis (requires ANTHROPIC_API_KEY).
+  // Falls back to the keyword-based analyzer if the key is missing or the call fails.
+  const textBoosts = await (async () => {
+    if (!moodInput.freeText) return { genreIds: [], excludeGenreIds: [], overrides: {} };
+    if (process.env.OPENROUTER_API_KEY) {
+      try {
+        return await analyzeTextWithAI(moodInput.freeText);
+      } catch (err) {
+        console.warn("[recommendationEngine] AI text analysis failed, falling back to keyword analyzer:", err);
+      }
+    }
+    return analyzeText(moodInput.freeText);
+  })();
 
   const boostedGenres = [...new Set([...moodSignal.genres, ...textBoosts.genreIds])];
 
   const tasteGenreIds = tasteProfile.topGenres.map((g) => g.id);
-  const queryGenres   = resolveQueryGenres(tasteGenreIds, boostedGenres);
+  const queryGenres   = resolveQueryGenres(tasteGenreIds, boostedGenres, textBoosts.genreIds);
 
   const voteThreshold = (() => {
     if (tasteProfile.ratingBias === "picky")    return Math.max(moodSignal.voteThreshold, 7.0);
@@ -184,6 +212,10 @@ export async function generateRecommendations(
     "vote_count.gte": 100,
     with_original_language: "en",
     ...textBoosts.overrides,
+    // Exclude genres explicitly requested by the user (e.g. "no infantil")
+    ...(textBoosts.excludeGenreIds.length > 0
+      ? { without_genres: textBoosts.excludeGenreIds.join(",") }
+      : {}),
   };
 
   const candidates = await fetchDiscoverCandidates(discoverParams);
@@ -193,7 +225,7 @@ export async function generateRecommendations(
   // Score every candidate — watched and unwatched alike
   const scored = candidates.map((movie) => ({
     movie,
-    score: scoreMovie(movie, tasteProfile, moodSignal.genres),
+    score: scoreMovie(movie, tasteProfile, moodSignal.genres, textBoosts.genreIds),
     alreadySeen: watchedSet.has(movie.id),
   }));
   scored.sort((a, b) => b.score - a.score);

@@ -13,7 +13,10 @@
       "WebFetch(domain:www.cosmos.so)",
       "WebSearch",
       "WebFetch(domain:hero.gallery)",
-      "WebFetch(domain:v0.app)"
+      "WebFetch(domain:v0.app)",
+      "Bash(ls C:UserslogijMovieAsUFeel.env*)",
+      "Bash(npm install:*)",
+      "Bash(npm uninstall:*)"
     ]
   }
 }

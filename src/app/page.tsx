@@ -218,23 +218,40 @@ export default function HomePage() {
           style={{ height: "100dvh" }}
         >
 
-          {/* Scattered poster background — client-only */}
+          {/* Scattered poster background — client-only, z-5 (above bg gradients) */}
           {mounted && <ScatteredPosters />}
 
-          {/* Ambient glow — warm, subtle */}
-          <div className="absolute inset-0 pointer-events-none" style={{
-            background: "radial-gradient(ellipse 90% 80% at 50% 50%, transparent 20%, rgba(12,12,18,0.7) 60%, rgba(12,12,18,0.97) 100%)",
-          }} />
+          {/*
+           * ── Vignette layers — z-[9]: above cards (z-5), below content (z-10) ──
+           * These sit ON TOP of the orbiting posters so:
+           *   • The center text area stays dark + readable
+           *   • Cards fade out at top / bottom edges
+           *   • The ambient warm glow bleeds through the transparent zones
+           */}
+          <div
+            className="absolute inset-0 pointer-events-none"
+            style={{
+              zIndex: 9,
+              background: [
+                /* Deep center spotlight — keeps title/CTA readable */
+                "radial-gradient(ellipse 58% 62% at 50% 55%, rgba(12,12,18,0.90) 0%, rgba(12,12,18,0.55) 42%, transparent 68%)",
+                /* Bottom edge fade — cards dissolve into black */
+                "linear-gradient(to top,  rgba(12,12,18,0.98) 0%, rgba(12,12,18,0.5) 18%, transparent 38%)",
+                /* Top edge fade */
+                "linear-gradient(to bottom, rgba(12,12,18,0.85) 0%, transparent 22%)",
+                /* Left / right edge softening */
+                "linear-gradient(to right, rgba(12,12,18,0.45) 0%, transparent 18%)",
+                "linear-gradient(to left,  rgba(12,12,18,0.45) 0%, transparent 18%)",
+              ].join(", "),
+            }}
+          />
+
+          {/* Ambient warm glow — behind cards (no z-index → z:auto < z-5) */}
           <div className="absolute pointer-events-none pulse-glow" style={{
             left: "20%", top: "15%", width: 600, height: 400,
-            background: "radial-gradient(ellipse at center, rgba(201,169,110,0.06) 0%, transparent 70%)",
+            background: "radial-gradient(ellipse at center, rgba(201,169,110,0.07) 0%, transparent 70%)",
             filter: "blur(60px)",
           }} />
-
-          {/* Gradient fades */}
-          <div className="absolute inset-0 pointer-events-none" style={{ background: "radial-gradient(ellipse 65% 70% at 50% 50%, transparent 0%, rgba(12,12,18,0.65) 55%, rgba(12,12,18,0.95) 100%)" }} />
-          <div className="absolute bottom-0 left-0 right-0 pointer-events-none" style={{ height: 300, background: "linear-gradient(to top, #0C0C12 15%, transparent 100%)" }} />
-          <div className="absolute top-0 left-0 right-0 pointer-events-none" style={{ height: 160, background: "linear-gradient(to bottom, #0C0C12 5%, transparent 100%)" }} />
 
           {/* Navbar */}
           <nav className="absolute top-6 left-5 right-5 z-20 flex items-center h-14 px-4 sm:px-6 gap-4" style={{ background: "rgba(240,236,227,0.04)", border: "1px solid rgba(240,236,227,0.08)", borderRadius: 16 }}>
