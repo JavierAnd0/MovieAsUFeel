@@ -19,19 +19,15 @@ export default function UsernameInput({ profile, onProfileLoaded }: Props) {
   async function loadProfile() {
     const trimmed = username.trim();
     if (!trimmed) return;
-
     setLoading(true);
     setError(null);
-
     try {
       const res = await fetch(`/api/letterboxd?username=${encodeURIComponent(trimmed)}`);
       const data = await res.json();
-
       if (!res.ok) {
         setError(data.error ?? "Error al cargar el perfil");
         return;
       }
-
       onProfileLoaded(data as TasteProfile);
     } catch {
       setError("Error de red. Comprueba tu conexión e inténtalo de nuevo.");
@@ -44,7 +40,10 @@ export default function UsernameInput({ profile, onProfileLoaded }: Props) {
     <div className="space-y-4">
       <div className="flex gap-2">
         <div className="relative flex-1">
-          <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-gray-500 select-none">
+          <span
+            className="absolute left-3 top-1/2 -translate-y-1/2 text-sm select-none pointer-events-none"
+            style={{ color: "rgba(255,255,255,0.3)" }}
+          >
             letterboxd.com/
           </span>
           <input
@@ -55,14 +54,21 @@ export default function UsernameInput({ profile, onProfileLoaded }: Props) {
             placeholder="tu_usuario"
             autoComplete="off"
             spellCheck={false}
-            className="w-full rounded-lg border border-gray-700 bg-gray-900 py-2.5 pr-3 pl-[7.5rem] text-sm text-gray-200 placeholder-gray-600 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+            className="w-full rounded-xl py-2.5 pr-3 pl-[7.5rem] text-sm text-white placeholder-white/20 focus:outline-none transition-all"
+            style={{
+              background: "rgba(255,255,255,0.05)",
+              border: "1px solid rgba(255,255,255,0.1)",
+            }}
+            onFocus={(e) => { e.currentTarget.style.border = "1px solid rgba(0,212,255,0.4)"; }}
+            onBlur={(e) => { e.currentTarget.style.border = "1px solid rgba(255,255,255,0.1)"; }}
           />
         </div>
         <button
           type="button"
           onClick={loadProfile}
           disabled={loading || !username.trim()}
-          className="flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed"
+          className="flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold text-[#0a0a0f] transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+          style={{ background: "linear-gradient(to right, #00d4ff, #8338ec)" }}
         >
           {loading ? <LoadingSpinner size={16} /> : null}
           {loading ? "Cargando..." : "Cargar perfil"}
@@ -72,14 +78,17 @@ export default function UsernameInput({ profile, onProfileLoaded }: Props) {
       {error && <ErrorMessage message={error} />}
 
       {profile && !loading && (
-        <div className="rounded-lg border border-gray-700/60 bg-gray-800/50 px-4 py-3">
+        <div className="rounded-xl px-4 py-3" style={{
+          border: "1px solid rgba(255,255,255,0.08)",
+          background: "rgba(255,255,255,0.04)",
+        }}>
           <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <span className="text-sm font-medium text-gray-200">@{profile.username}</span>
-              <span className="text-xs text-gray-500">·</span>
-              <span className="text-xs text-gray-400">{profile.filmCount} películas</span>
-              <span className="text-xs text-gray-500">·</span>
-              <span className="text-xs text-gray-400">⭐ {profile.avgRating.toFixed(1)}</span>
+            <div className="flex items-center gap-2 text-sm">
+              <span className="font-medium text-white">@{profile.username}</span>
+              <span style={{ color: "rgba(255,255,255,0.2)" }}>·</span>
+              <span style={{ color: "rgba(255,255,255,0.5)" }}>{profile.filmCount} películas</span>
+              <span style={{ color: "rgba(255,255,255,0.2)" }}>·</span>
+              <span style={{ color: "rgba(255,214,10,0.8)" }}>★ {profile.avgRating.toFixed(1)}</span>
             </div>
           </div>
           {profile.topGenres.length > 0 && (
