@@ -38,6 +38,7 @@ export type TMDBDiscoverResponse = {
 
 export type DiscoverParams = {
   with_genres?: string;
+  without_genres?: string;
   sort_by: string;
   "vote_average.gte": number;
   "vote_count.gte": number;
@@ -45,5 +46,6 @@ export type DiscoverParams = {
   "primary_release_date.gte"?: string;
   "primary_release_date.lte"?: string;
   "with_runtime.lte"?: number;
+  "with_runtime.gte"?: number;
   page?: number;
 };
