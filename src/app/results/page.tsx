@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import BrandLogo from "@/components/ui/BrandLogo";
 import MovieGrid from "@/components/results/MovieGrid";
 import ResultsHeader from "@/components/results/ResultsHeader";
 import LoadingSpinner from "@/components/ui/LoadingSpinner";
@@ -27,19 +28,6 @@ const MOOD_GLOW: Record<MoodCategory, string> = {
   excited:    "rgba(255,77,155,0.12)",
   tired:      "rgba(148,163,184,0.08)",
 };
-
-function Logo() {
-  return (
-    <div className="flex items-center gap-3">
-      <div className="relative flex items-center justify-center flex-shrink-0" style={{ width: 32, height: 32, borderRadius: 8, background: "linear-gradient(135deg, #00d4ff, #8338ec)" }}>
-        <div style={{ position: "absolute", left: 9, top: 11, width: 14, height: 10, backgroundColor: "rgba(255,255,255,0.85)", borderRadius: 1 }} />
-        <div style={{ position: "absolute", left: 9, top: 11, width: 5,  height: 10, backgroundColor: "rgba(0,212,255,0.6)" }} />
-        <div style={{ position: "absolute", left: 18, top: 11, width: 5, height: 10, backgroundColor: "rgba(0,212,255,0.6)" }} />
-      </div>
-      <span style={{ fontWeight: 700, fontSize: 18, color: "white" }}>CineMood</span>
-    </div>
-  );
-}
 
 function SectionDivider({ count }: { count: number }) {
   return (
@@ -117,8 +105,8 @@ export default function ResultsPage() {
           <p className="text-sm mb-8" style={{ color: "rgba(255,255,255,0.5)" }}>
             No encontramos películas para esta combinación. Prueba con un estado de ánimo diferente.
           </p>
-          <Link href="/" className="inline-flex items-center justify-center h-11 px-6 rounded-xl font-bold text-sm text-[#0a0a0f]" style={{ background: "linear-gradient(to right, #00d4ff, #8338ec)" }}>
-            Empezar de nuevo
+          <Link href="/" className="inline-flex h-11 items-center justify-center rounded-xl px-6 text-sm font-bold text-[#0a0a0f]" style={{ background: "linear-gradient(135deg, #C9A96E, #A07840)" }}>
+            Ajustar selección
           </Link>
         </div>
       </div>
@@ -142,8 +130,8 @@ export default function ResultsPage() {
       <div className="relative z-10 mx-auto max-w-6xl px-4 py-8 sm:py-12">
 
         {/* Navbar */}
-        <nav className="mb-8 flex items-center justify-between h-14 px-6 rounded-2xl" style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)" }}>
-          <Link href="/"><Logo /></Link>
+        <nav className="mb-8 flex h-auto min-h-14 items-center justify-between gap-3 rounded-2xl px-4 py-3 sm:h-14 sm:px-6 sm:py-0" style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)", backdropFilter: "blur(18px)" }}>
+          <Link href="/" aria-label="Volver a CineMood"><BrandLogo /></Link>
 
           <div className="hidden sm:flex items-center gap-2">
             {moodCategories.map(m => (
@@ -157,12 +145,12 @@ export default function ResultsPage() {
 
           <Link
             href="/"
-            className="text-sm font-medium rounded-xl px-4 py-2 transition-all"
+            className="whitespace-nowrap rounded-xl px-3 py-2 text-sm font-medium transition-all sm:px-4"
             style={{ color: "rgba(255,255,255,0.6)", border: "1px solid rgba(255,255,255,0.1)", background: "rgba(255,255,255,0.04)" }}
             onMouseEnter={e => { (e.currentTarget as HTMLAnchorElement).style.background = "rgba(255,255,255,0.08)"; }}
             onMouseLeave={e => { (e.currentTarget as HTMLAnchorElement).style.background = "rgba(255,255,255,0.04)"; }}
           >
-            ← Empezar de nuevo
+            Ajustar mood
           </Link>
         </nav>
 

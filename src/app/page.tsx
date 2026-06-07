@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "framer-motion";
+import BrandLogo from "@/components/ui/BrandLogo";
 import LoadingSpinner from "@/components/ui/LoadingSpinner";
 import { MOOD_META } from "@/lib/mood/moodMap";
 import type { TasteProfile } from "@/types/letterboxd";
@@ -14,6 +15,16 @@ import MovieSearch from "@/components/home/MovieSearch";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 type Step = "hero" | "connect" | "mood";
+
+type OnboardingDraft = {
+  step: Step;
+  username: string;
+  profile: TasteProfile | null;
+  selectedMoods: MoodCategory[];
+  freeText: string;
+};
+
+const DRAFT_STORAGE_KEY = "movieasufeel_onboarding";
 
 const MOOD_ORDER: MoodCategory[] = [
   "happy", "sad", "anxious", "relaxed",
@@ -40,29 +51,13 @@ const LOADING_MESSAGES = [
 ];
 
 
-// ─── Shared sub-components ────────────────────────────────────────────────────
-function Logo() {
-  return (
-    <div className="flex items-center gap-3">
-      <div className="relative flex items-center justify-center flex-shrink-0" style={{
-        width: 32, height: 32, borderRadius: 8,
-        background: "linear-gradient(135deg, #00d4ff, #8338ec)",
-      }}>
-        <div style={{ position: "absolute", left: 9, top: 11, width: 14, height: 10, backgroundColor: "rgba(255,255,255,0.85)", borderRadius: 1 }} />
-        <div style={{ position: "absolute", left: 9, top: 11, width: 5,  height: 10, backgroundColor: "rgba(0,212,255,0.6)" }} />
-        <div style={{ position: "absolute", left: 18, top: 11, width: 5, height: 10, backgroundColor: "rgba(0,212,255,0.6)" }} />
-      </div>
-      <span style={{ fontWeight: 700, fontSize: 18, color: "white" }}>CineMood</span>
-    </div>
-  );
-}
-
 function NavBar({ onBack, backLabel, right }: { onBack?: () => void; backLabel?: string; right?: React.ReactNode }) {
   return (
-    <div className="absolute top-6 left-5 right-5 z-20 flex items-center h-14 px-6" style={{
+    <div className="absolute left-4 right-4 top-4 z-20 flex h-14 items-center px-4 sm:left-5 sm:right-5 sm:top-6 sm:px-6" style={{
       background: "rgba(255,255,255,0.05)",
       border: "1px solid rgba(255,255,255,0.1)",
-      borderRadius: 16,
+      borderRadius: 14,
+      backdropFilter: "blur(18px)",
     }}>
       {onBack ? (
         <button
@@ -78,7 +73,7 @@ function NavBar({ onBack, backLabel, right }: { onBack?: () => void; backLabel?:
       ) : <div className="w-20" />}
 
       <div className="absolute left-1/2 -translate-x-1/2">
-        <Logo />
+        <BrandLogo />
       </div>
 
       <div className="ml-auto">{right}</div>
@@ -111,10 +106,44 @@ export default function HomePage() {
 
   // Mobile search overlay
   const [mobileSearch, setMobileSearch] = useState(false);
+  const [draftHydrated, setDraftHydrated] = useState(false);
 
   // Prevent hydration mismatch for 3D showcase
   const [mounted, setMounted] = useState(false);
   useEffect(() => { setMounted(true); }, []);
+
+  useEffect(() => {
+    try {
+      const raw = sessionStorage.getItem(DRAFT_STORAGE_KEY);
+      if (!raw) return;
+
+      const draft = JSON.parse(raw) as Partial<OnboardingDraft>;
+      setUsername(draft.username ?? draft.profile?.username ?? "");
+      setProfile(draft.profile ?? null);
+      setSelectedMoods(draft.selectedMoods ?? []);
+      setFreeText(draft.freeText ?? "");
+
+      if (draft.profile) {
+        setStep(draft.step === "connect" ? "connect" : "mood");
+      }
+    } catch {
+      sessionStorage.removeItem(DRAFT_STORAGE_KEY);
+    } finally {
+      setDraftHydrated(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!draftHydrated) return;
+    const draft: OnboardingDraft = {
+      step,
+      username,
+      profile,
+      selectedMoods,
+      freeText,
+    };
+    sessionStorage.setItem(DRAFT_STORAGE_KEY, JSON.stringify(draft));
+  }, [draftHydrated, freeText, profile, selectedMoods, step, username]);
 
   useEffect(() => {
     if (!loading) return;
@@ -141,6 +170,7 @@ export default function HomePage() {
       const data = await res.json();
       if (!res.ok) { setConnectError(data.error ?? "Error al cargar el perfil"); return; }
       setProfile(data as TasteProfile);
+      setUsername((data as TasteProfile).username);
     } catch {
       setConnectError("Error de red. Comprueba tu conexión.");
     } finally {
@@ -164,6 +194,7 @@ export default function HomePage() {
       });
       const data = await res.json();
       if (!res.ok) { setRecError(data.error ?? "Error al generar recomendaciones"); setLoading(false); return; }
+      sessionStorage.setItem(DRAFT_STORAGE_KEY, JSON.stringify({ step: "mood", username: profile.username, profile, selectedMoods, freeText }));
       sessionStorage.setItem("movieasufeel_results", JSON.stringify({ profile, moodCategories: selectedMoods, result: data }));
       router.push("/results");
     } catch {
@@ -194,7 +225,9 @@ export default function HomePage() {
       {/* ── Global loading overlay ─────────────────────────────────────────── */}
       {loading && (
         <div className="fixed inset-0 z-50 flex flex-col items-center justify-center gap-5" style={{ background: "rgba(10,10,15,0.96)", backdropFilter: "blur(8px)" }}>
-          <div className="text-5xl" style={{ animation: "pulse 2s ease-in-out infinite" }}>🎬</div>
+          <div style={{ animation: "pulse 2s ease-in-out infinite" }}>
+            <BrandLogo compact />
+          </div>
           <div style={{ color: "rgba(0,212,255,0.8)" }}>
             <LoadingSpinner size={36} />
           </div>
@@ -254,11 +287,11 @@ export default function HomePage() {
           }} />
 
           {/* Navbar */}
-          <nav className="absolute top-6 left-5 right-5 z-20 flex items-center h-14 px-4 sm:px-6 gap-4" style={{ background: "rgba(240,236,227,0.04)", border: "1px solid rgba(240,236,227,0.08)", borderRadius: 16 }}>
-            <Logo />
+          <nav className="absolute left-4 right-4 top-4 z-20 flex h-14 items-center gap-3 px-4 sm:left-5 sm:right-5 sm:top-6 sm:px-6" style={{ background: "rgba(240,236,227,0.045)", border: "1px solid rgba(240,236,227,0.1)", borderRadius: 14, backdropFilter: "blur(18px)" }}>
+            <BrandLogo />
 
             {/* Desktop search — hidden on mobile */}
-            <div className="hidden sm:flex flex-1 justify-center px-4" style={{ maxWidth: 460, margin: "0 auto" }}>
+            <div className="hidden sm:flex flex-1 justify-center px-3" style={{ maxWidth: 460, margin: "0 auto" }}>
               <div style={{ width: "100%" }}>
                 <MovieSearch />
               </div>
@@ -313,7 +346,7 @@ export default function HomePage() {
           )}
 
           {/* Hero content */}
-          <div className="relative z-10 flex flex-col items-center justify-center h-full" style={{ paddingTop: 80, paddingBottom: 80 }}>
+          <div className="relative z-10 flex h-full flex-col items-center justify-center px-5" style={{ paddingTop: 86, paddingBottom: 72 }}>
             {/* Badge */}
             <div className="flex items-center gap-2" style={{ padding: "8px 16px", background: "rgba(201,169,110,0.08)", border: "1px solid rgba(201,169,110,0.2)", borderRadius: 100, marginBottom: 36 }}>
               <motion.span
@@ -326,7 +359,7 @@ export default function HomePage() {
             {/* Title */}
             <h1 className="font-display" style={{
               fontWeight: 400,
-              fontSize: "clamp(72px, 11vw, 150px)",
+              fontSize: "clamp(58px, 11vw, 150px)",
               lineHeight: 0.9,
               letterSpacing: "2px",
               color: "#F0ECE3",
@@ -338,7 +371,7 @@ export default function HomePage() {
               Movies as<br />you feel
             </h1>
             {/* Subtitle */}
-            <p style={{ fontWeight: 400, fontSize: "clamp(15px, 1.8vw, 18px)", color: "rgba(240,236,227,0.5)", textAlign: "center", marginBottom: 40, maxWidth: 420, lineHeight: 1.6 }}>
+            <p style={{ fontWeight: 400, fontSize: "clamp(14px, 1.8vw, 18px)", color: "rgba(240,236,227,0.5)", textAlign: "center", marginBottom: 40, maxWidth: 420, lineHeight: 1.6 }}>
               Conecta Letterboxd · selecciona tu estado de ánimo · descubre tu próxima película favorita
             </p>
             {/* CTA with shimmer */}
@@ -412,7 +445,7 @@ export default function HomePage() {
                   border: "1px solid rgba(255,255,255,0.1)",
                   fontSize: 32,
                 }}>
-                  🎬
+                  <BrandLogo compact />
                 </div>
               </div>
 
@@ -428,10 +461,10 @@ export default function HomePage() {
               </p>
 
               {/* Input card */}
-              <div style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 20, padding: 24 }}>
+              <div className="glass-panel" style={{ borderRadius: 20, padding: 24 }}>
 
                 {/* URL input row */}
-                <div className="flex gap-2" style={{ marginBottom: connectError || profile ? 16 : 0 }}>
+                <div className="flex flex-col gap-2 sm:flex-row" style={{ marginBottom: connectError || profile ? 16 : 0 }}>
                   <div className="relative flex-1">
                     <span className="absolute top-1/2 -translate-y-1/2 text-sm pointer-events-none select-none" style={{ left: 14, color: "rgba(255,255,255,0.25)" }}>
                       letterboxd.com/
@@ -444,7 +477,7 @@ export default function HomePage() {
                       placeholder="tu_usuario"
                       autoComplete="off"
                       spellCheck={false}
-                      className="w-full text-sm text-white rounded-xl py-3 pr-3 focus:outline-none transition-all duration-200"
+                      className="w-full rounded-xl py-3 pr-3 text-sm text-white transition-all duration-200 focus:outline-none"
                       style={{
                         background: "rgba(255,255,255,0.06)",
                         border: "1px solid rgba(255,255,255,0.1)",
@@ -457,7 +490,7 @@ export default function HomePage() {
                   <button
                     onClick={loadProfile}
                     disabled={connectLoading || !username.trim()}
-                    className="flex items-center gap-2 rounded-xl px-4 text-sm font-bold transition-all disabled:opacity-40 disabled:cursor-not-allowed flex-shrink-0"
+                    className="flex flex-shrink-0 items-center justify-center gap-2 rounded-xl px-4 text-sm font-bold transition-all disabled:cursor-not-allowed disabled:opacity-40"
                     style={{ background: "linear-gradient(135deg, #C9A96E, #A07840)", color: "#0C0C12", border: "none", cursor: "pointer", height: 46 }}
                   >
                     {connectLoading && <LoadingSpinner size={15} />}
@@ -485,9 +518,9 @@ export default function HomePage() {
                           {profile.filmCount} películas · ⭐ {profile.avgRating.toFixed(1)}
                         </p>
                       </div>
-                      <div className="ml-auto">
+                      <div className="ml-auto hidden sm:block">
                         <span className="text-xs font-medium px-2 py-1 rounded-full" style={{ background: "rgba(201,169,110,0.1)", color: "#C9A96E", border: "1px solid rgba(201,169,110,0.2)" }}>
-                          ✓ Conectado
+                          Conectado
                         </span>
                       </div>
                     </div>
@@ -508,12 +541,12 @@ export default function HomePage() {
               <div style={{ marginTop: 16, opacity: profile ? 1 : 0, transform: profile ? "translateY(0)" : "translateY(8px)", transition: "opacity 0.3s ease, transform 0.3s ease", pointerEvents: profile ? "auto" : "none" }}>
                 <button
                   onClick={() => goTo("mood")}
-                  className="w-full font-bold text-sm rounded-xl transition-all"
+                  className="w-full rounded-xl text-sm font-bold transition-all"
                   style={{ height: 52, background: "linear-gradient(135deg, #C9A96E, #A07840)", color: "#0C0C12", border: "none", cursor: "pointer", boxShadow: "0 0 30px rgba(201,169,110,0.25)" }}
                   onMouseEnter={e => { e.currentTarget.style.boxShadow = "0 0 50px rgba(201,169,110,0.4)"; e.currentTarget.style.transform = "translateY(-1px)"; }}
                   onMouseLeave={e => { e.currentTarget.style.boxShadow = "0 0 30px rgba(201,169,110,0.25)"; e.currentTarget.style.transform = "translateY(0)"; }}
                 >
-                  Continuar → Seleccionar mood
+                  Continuar a mood
                 </button>
               </div>
 
