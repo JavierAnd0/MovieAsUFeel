@@ -71,7 +71,10 @@ export default function ResultsHeader({ profile, moodCategories, result, newCoun
             >
               {newCount} película{newCount !== 1 ? "s" : ""} para ti
               {seenCount > 0 && (
-                <span style={{ fontSize: "clamp(20px, 2.2vw, 30px)", color: "rgba(255,255,255,0.28)", fontWeight: 400, marginLeft: "0.5rem" }}>
+                <span
+                  className="mt-1 block sm:mt-0 sm:inline"
+                  style={{ fontSize: "clamp(20px, 2.2vw, 30px)", color: "rgba(255,255,255,0.28)", fontWeight: 400, marginLeft: "clamp(0px, 1vw, 0.5rem)" }}
+                >
                   + {seenCount} vistas
                 </span>
               )}
