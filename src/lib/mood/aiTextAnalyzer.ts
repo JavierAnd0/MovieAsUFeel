@@ -1,13 +1,19 @@
 import type { DiscoverParams } from "@/types/tmdb";
 import { EMPTY_INTENT, type TextIntent } from "./textAnalyzer";
 
-// ─── Model fallback chain ─────────────────────────────────────────────────
-// Tried in order — skips to the next on 429 / provider error.
-// Free models on OpenRouter are retired without notice: when every request
-// falls back to the keyword analyzer, this list is the first thing to check
-// (https://openrouter.ai/models?max_price=0). OPENROUTER_MODELS overrides it
-// without a deploy, as a comma-separated list.
-const DEFAULT_MODEL_CHAIN = [
+// ─── Model chain ──────────────────────────────────────────────────────────
+// Gemini (Google AI Studio's own free tier) goes first when GEMINI_API_KEY is
+// set; OpenRouter's free models are the backstop. Each provider's list can be
+// replaced without a deploy via GEMINI_MODELS / OPENROUTER_MODELS
+// (comma-separated). Free models get retired without notice: when every
+// request falls back to the keyword analyzer, these lists are the first thing
+// to check.
+type Provider = "gemini" | "openrouter";
+type ModelRef = { provider: Provider; model: string };
+
+const DEFAULT_GEMINI_MODELS = ["gemini-3.5-flash-lite", "gemini-2.5-flash-lite"];
+
+const DEFAULT_OPENROUTER_MODELS = [
   "qwen/qwen3.8-27b:free",
   "google/gemma-4-26b-a4b-it:free",
   "google/gemma-4-31b-it:free",
@@ -15,10 +21,24 @@ const DEFAULT_MODEL_CHAIN = [
   "nvidia/nemotron-3-super-120b-a12b:free",
 ];
 
-function modelChain(): string[] {
-  const fromEnv = (process.env.OPENROUTER_MODELS ?? "").split(",").map((m) => m.trim()).filter(Boolean);
-  return fromEnv.length > 0 ? fromEnv : DEFAULT_MODEL_CHAIN;
+const listFromEnv = (value: string | undefined, fallback: string[]) => {
+  const list = (value ?? "").split(",").map((m) => m.trim()).filter(Boolean);
+  return list.length > 0 ? list : fallback;
+};
+
+function modelChain(): ModelRef[] {
+  return [
+    ...(process.env.GEMINI_API_KEY
+      ? listFromEnv(process.env.GEMINI_MODELS, DEFAULT_GEMINI_MODELS).map((model) => ({ provider: "gemini" as const, model }))
+      : []),
+    ...(process.env.OPENROUTER_API_KEY
+      ? listFromEnv(process.env.OPENROUTER_MODELS, DEFAULT_OPENROUTER_MODELS).map((model) => ({ provider: "openrouter" as const, model }))
+      : []),
+  ];
 }
+
+/** Whether any language model is configured for the free-text field. */
+export const hasTextModel = () => Boolean(process.env.GEMINI_API_KEY || process.env.OPENROUTER_API_KEY);
 
 // ─── TMDB genre reference ─────────────────────────────────────────────────
 const GENRE_MAP =
@@ -111,11 +131,65 @@ const strings = (value: unknown, max: number): string[] =>
 const genreIdList = (value: unknown): number[] =>
   Array.isArray(value) ? value.filter((v): v is number => Number.isInteger(v)).slice(0, 6) : [];
 
-/** OpenRouter's daily allowance of free requests is used up for this API key. */
-class QuotaExhaustedError extends Error {}
+/**
+ * A free-tier quota is used up. `scope` says what is out: the whole provider
+ * (OpenRouter's quota is per account) or just one model (Gemini's is per model).
+ */
+class QuotaExhaustedError extends Error {
+  constructor(message: string, readonly scope: string) {
+    super(message);
+  }
+}
 
-// ─── Single model call ────────────────────────────────────────────────────
-async function tryModel(model: string, prompt: string): Promise<string> {
+// ─── Gemini (Interactions API) ────────────────────────────────────────────
+/** Collects every text part in the response, wherever the API nests it. */
+function collectText(node: unknown, out: string[] = []): string[] {
+  if (Array.isArray(node)) node.forEach((n) => collectText(n, out));
+  else if (node && typeof node === "object") {
+    const o = node as Record<string, unknown>;
+    if (typeof o.text === "string" && (o.type === undefined || o.type === "text")) out.push(o.text);
+    else Object.values(o).forEach((v) => collectText(v, out));
+  }
+  return out;
+}
+
+async function callGemini(model: string, prompt: string): Promise<string> {
+  const response = await fetch("https://generativelanguage.googleapis.com/v1beta/interactions", {
+    method: "POST",
+    headers: {
+      "x-goog-api-key": process.env.GEMINI_API_KEY ?? "",
+      "Content-Type":   "application/json",
+    },
+    body: JSON.stringify({
+      model,
+      input: prompt,
+      store: false,
+      generation_config: {
+        temperature: 0,
+        max_output_tokens: 800,
+        // Extraction needs no deliberation. 3.x flash-lite accepts "minimal"; others start at "low".
+        thinking_level: /^gemini-3.*flash-lite/.test(model) ? "minimal" : "low",
+      },
+    }),
+    signal: AbortSignal.timeout(MODEL_TIMEOUT_MS),
+  });
+
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok || result.error) {
+    const msg: string = result?.error?.message ?? `HTTP ${response.status}`;
+    if (response.status === 429 || result?.error?.status === "RESOURCE_EXHAUSTED") {
+      throw new QuotaExhaustedError(msg, `gemini:${model}`);
+    }
+    throw new Error(msg);
+  }
+
+  const content = collectText(result.steps ?? result.outputs ?? result).join("");
+  if (!content) throw new Error("Empty response from model");
+  return content;
+}
+
+// ─── OpenRouter ───────────────────────────────────────────────────────────
+async function callOpenRouter(model: string, prompt: string): Promise<string> {
   const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
     method: "POST",
     headers: {
@@ -140,7 +214,7 @@ async function tryModel(model: string, prompt: string): Promise<string> {
   if (!response.ok || result.error) {
     const msg: string = result?.error?.message ?? `HTTP ${response.status}`;
     // The daily free quota is per account, not per model: every other model would fail too
-    if (/per-day|daily|credits/i.test(msg)) throw new QuotaExhaustedError(msg);
+    if (/per-day|daily|credits/i.test(msg)) throw new QuotaExhaustedError(msg, "openrouter");
     throw new Error(msg);
   }
 
@@ -164,9 +238,10 @@ function extractJSON(raw: string): string {
 }
 
 // ─── One model: prompt → validated intent ────────────────────────────────
-async function askModel(model: string, prompt: string): Promise<TextIntent> {
+async function askModel({ provider, model }: ModelRef, prompt: string): Promise<TextIntent> {
   try {
-    const prefs = JSON.parse(extractJSON(await tryModel(model, prompt))) as AIPreferences;
+    const raw = provider === "gemini" ? await callGemini(model, prompt) : await callOpenRouter(model, prompt);
+    const prefs = JSON.parse(extractJSON(raw)) as AIPreferences;
 
     const overrides: Partial<DiscoverParams> = {};
     if (prefs.maxRuntime != null) overrides["with_runtime.lte"]         = prefs.maxRuntime;
@@ -191,52 +266,56 @@ async function askModel(model: string, prompt: string): Promise<TextIntent> {
       people:          strings(prefs.people, 3),
     };
   } catch (err) {
-    console.warn(`[aiTextAnalyzer] model ${model} failed:`, err instanceof Error ? err.message : err);
+    console.warn(`[aiTextAnalyzer] ${provider} ${model} failed:`, err instanceof Error ? err.message : err);
     throw err;
   }
 }
 
 // ─── Main export — throws only if every model fails ───────────────────────
-// Free models share a small daily request quota per account, so models are
-// asked one at a time and the first good answer wins. An answer that names
-// themes but no example films is "lazy"; one more model gets a chance to do
-// better before we settle for it.
+// Free tiers come with small request quotas, so models are asked one at a
+// time and the first good answer wins. An answer that names themes but no
+// example films is "lazy"; one more model gets a chance to do better before
+// we settle for it.
 //
-// When the quota runs out, every model fails until it resets. Rather than
-// spend seconds on a doomed chain for each search, pause the model calls for
-// a while and let the rule-based analyzer answer.
+// When a quota runs out, that scope (a Gemini model, or all of OpenRouter)
+// keeps failing until it resets. Rather than spend seconds on doomed calls for
+// each search, it is skipped for a while.
 const QUOTA_PAUSE_MS = 30 * 60 * 1000;
-let pausedUntil = 0;
+const pausedUntil = new Map<string, number>();
+
+const isPaused = ({ provider, model }: ModelRef) => {
+  const now = Date.now();
+  return (pausedUntil.get(provider) ?? 0) > now || (pausedUntil.get(`${provider}:${model}`) ?? 0) > now;
+};
 
 const isLazy = (intent: TextIntent) =>
   intent.examples.length === 0 &&
   (intent.keywords.length > 0 || intent.similarTo.length > 0 || intent.people.length > 0);
 
 export async function analyzeTextWithAI(text: string): Promise<TextIntent> {
-  if (Date.now() < pausedUntil) throw new Error("OpenRouter free quota exhausted; model calls paused");
+  const chain = modelChain().filter((ref) => !isPaused(ref));
+  if (chain.length === 0) throw new Error("No language model available (none configured, or all paused for quota)");
 
   const prompt = buildPrompt(text);
   const startedAt = Date.now();
   let fallback: TextIntent | null = null;
   let lastError: unknown;
 
-  for (const model of modelChain()) {
+  for (const ref of chain) {
     if (Date.now() - startedAt > TOTAL_BUDGET_MS) break;
+    if (isPaused(ref)) continue; // a provider-wide quota may have run out mid-loop
     try {
-      const intent = await askModel(model, prompt);
+      const intent = await askModel(ref, prompt);
       if (!isLazy(intent)) return intent;
       if (fallback) return fallback; // second lazy answer: stop spending quota
       fallback = intent;
     } catch (err) {
       lastError = err;
-      if (err instanceof QuotaExhaustedError) {
-        pausedUntil = Date.now() + QUOTA_PAUSE_MS;
-        break;
-      }
+      if (err instanceof QuotaExhaustedError) pausedUntil.set(err.scope, Date.now() + QUOTA_PAUSE_MS);
     }
   }
 
   if (fallback) return fallback;
   // All models failed — bubble up so recommendationEngine falls back to keywords
-  throw lastError ?? new Error("All OpenRouter models failed");
+  throw lastError ?? new Error("All language models failed");
 }

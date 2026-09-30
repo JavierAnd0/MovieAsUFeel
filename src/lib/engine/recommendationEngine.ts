@@ -2,7 +2,7 @@ import { discoverMovies, getGenreList, getMovieDetail, getMovieRecommendations, 
 import { MOOD_MAP } from "@/lib/mood/moodMap";
 import { KEYWORD_LABEL, mergeMoodProfiles, type MoodProfile } from "@/lib/mood/moodProfile";
 import { analyzeText } from "@/lib/mood/textAnalyzer";
-import { analyzeTextWithAI } from "@/lib/mood/aiTextAnalyzer";
+import { analyzeTextWithAI, hasTextModel } from "@/lib/mood/aiTextAnalyzer";
 import { NO_TEXT, resolveTextIntent, type TextBoosts } from "@/lib/mood/textResolver";
 import type { SeedFilm, TasteProfile } from "@/types/letterboxd";
 import type { MoodInput } from "@/types/mood";
@@ -196,7 +196,7 @@ async function analyzeFreeText(freeText?: string): Promise<TextBoosts> {
   if (cached && Date.now() - cached.at < TEXT_CACHE_TTL_MS) return cached.boosts;
 
   const rules = analyzeText(freeText);
-  if (process.env.OPENROUTER_API_KEY) {
+  if (hasTextModel()) {
     try {
       const ai = await analyzeTextWithAI(freeText);
       // The rule-based themes are few but dependable; keep them alongside the model's
