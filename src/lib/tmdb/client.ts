@@ -2,6 +2,7 @@ import type {
   TMDBSearchResponse,
   TMDBDiscoverResponse,
   TMDBGenre,
+  TMDBMovieDetail,
   DiscoverParams,
 } from "@/types/tmdb";
 
@@ -19,7 +20,10 @@ async function tmdbFetch<T>(path: string, params: Record<string, string | number
   for (const [k, v] of Object.entries(params)) {
     url.searchParams.set(k, String(v));
   }
-  const res = await fetch(url.toString(), { next: { revalidate: 0 } });
+  const res = await fetch(url.toString(), {
+    next: { revalidate: 0 },
+    signal: AbortSignal.timeout(8000),
+  });
   if (!res.ok) {
     throw new Error(`TMDB ${path} → ${res.status} ${res.statusText}`);
   }
@@ -31,6 +35,7 @@ export async function searchMovie(
   year?: number
 ): Promise<TMDBSearchResponse> {
   return tmdbFetch<TMDBSearchResponse>("/search/movie", {
+    language: "es-ES",
     query: title,
     ...(year ? { year } : {}),
   });
@@ -43,12 +48,26 @@ export async function discoverMovies(
   for (const [k, v] of Object.entries(params)) {
     if (v !== undefined) flat[k] = v;
   }
-  return tmdbFetch<TMDBDiscoverResponse>("/discover/movie", flat);
+  // Spanish titles and synopses; TMDB falls back to the original when missing
+  return tmdbFetch<TMDBDiscoverResponse>("/discover/movie", { language: "es-ES", ...flat });
+}
+
+/** Core facts about one film. `withKeywords` also loads its TMDB keywords. */
+export async function getMovieDetail(id: number, withKeywords = false): Promise<TMDBMovieDetail> {
+  return tmdbFetch<TMDBMovieDetail>(`/movie/${id}`, {
+    language: "es-ES",
+    ...(withKeywords ? { append_to_response: "keywords" } : {}),
+  });
+}
+
+/** "People who liked this also liked…" — TMDB's own collaborative filtering. */
+export async function getMovieRecommendations(id: number, page = 1): Promise<TMDBDiscoverResponse> {
+  return tmdbFetch<TMDBDiscoverResponse>(`/movie/${id}/recommendations`, { language: "es-ES", page });
 }
 
 export async function getGenreList(): Promise<TMDBGenre[]> {
   const data = await tmdbFetch<{ genres: TMDBGenre[] }>("/genre/movie/list", {
-    language: "en",
+    language: "es-ES",
   });
   return data.genres;
 }

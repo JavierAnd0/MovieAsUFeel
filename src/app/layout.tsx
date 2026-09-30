@@ -1,18 +1,18 @@
 import type { Metadata } from "next";
-import { Space_Grotesk, Bebas_Neue } from "next/font/google";
+import { Instrument_Sans, Bebas_Neue } from "next/font/google";
 import "./globals.css";
 
-const spaceGrotesk = Space_Grotesk({
+const instrumentSans = Instrument_Sans({
   subsets: ["latin"],
-  weight: ["300", "400", "500", "600", "700"],
   display: "swap",
+  variable: "--font-body",
 });
 
 const bebasNeue = Bebas_Neue({
   subsets: ["latin"],
   weight: ["400"],
   display: "swap",
-  variable: "--font-display",
+  variable: "--font-marquee",
 });
 
 export const metadata: Metadata = {
@@ -24,8 +24,8 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="es" className={bebasNeue.variable} suppressHydrationWarning>
-      <body className={`${spaceGrotesk.className} film-grain`} suppressHydrationWarning>
+    <html lang="es" className={`${instrumentSans.variable} ${bebasNeue.variable}`} suppressHydrationWarning>
+      <body className="font-sans film-grain" suppressHydrationWarning>
         {children}
       </body>
     </html>

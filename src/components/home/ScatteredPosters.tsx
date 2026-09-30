@@ -7,6 +7,7 @@ import {
   useSpring,
   useAnimationFrame,
   useTransform,
+  useReducedMotion,
 } from "framer-motion";
 
 type Movie = { id: number; posterPath: string | null };
@@ -68,6 +69,7 @@ const CARDS: CardInfo[] = (() => {
 // ─── Individual orbiting poster card ─────────────────────────────────────
 function OrbitalCard({ info, src }: { info: CardInfo; src: string | null }) {
   const cardRef = useRef<HTMLDivElement>(null);
+  const reduceMotion = useReducedMotion();
 
   // ── Orbital x / y (updated every frame via rAF, no React re-renders) ──
   const orbitX = useMotionValue(0);
@@ -91,7 +93,8 @@ function OrbitalCard({ info, src }: { info: CardInfo; src: string | null }) {
 
   // ── 60 fps orbital update ─────────────────────────────────────────────
   useAnimationFrame((time) => {
-    const t     = time / 1000; // seconds since page load
+    // Reduced motion: posters hold their starting positions
+    const t     = reduceMotion ? 0 : time / 1000; // seconds since page load
     const omega = (info.dir * 2 * Math.PI) / info.duration;
     const angle = (info.angleDeg * Math.PI) / 180 + omega * t;
 
@@ -166,9 +169,9 @@ function OrbitalCard({ info, src }: { info: CardInfo; src: string | null }) {
         height:       h,
         borderRadius: 12 * info.sizeScale,
         overflow:     "hidden",
-        border:       "1px solid rgba(240,236,227,0.08)",
+        border:       "1px solid rgba(239,231,214,0.08)",
         boxShadow:    "0 12px 44px rgba(0,0,0,0.7)",
-        background:   "#18161E",
+        background:   "#1a1612",
         willChange:   "transform",
         flexShrink:   0,
       }}

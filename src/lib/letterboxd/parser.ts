@@ -8,17 +8,22 @@ type RSSItem = {
   "letterboxd:memberRating"?: number;
   "letterboxd:filmYear"?: number;
   "letterboxd:filmTitle"?: string;
+  "letterboxd:memberLike"?: string;
+  "tmdb:movieId"?: number;
 };
+
+export class LetterboxdNotFoundError extends Error {}
 
 export async function fetchLetterboxdRSS(username: string): Promise<WatchedFilm[]> {
   const url = `https://letterboxd.com/${encodeURIComponent(username)}/rss/`;
   const res = await fetch(url, {
     headers: { "User-Agent": "MovieAsUFeel/1.0" },
     next: { revalidate: 0 },
+    signal: AbortSignal.timeout(8000),
   });
 
   if (res.status === 404) {
-    throw new Error(`Letterboxd user "${username}" not found. Check the username and make sure the profile is public.`);
+    throw new LetterboxdNotFoundError(`Letterboxd user "${username}" not found. Check the username and make sure the profile is public.`);
   }
   if (!res.ok) {
     throw new Error(`Could not fetch Letterboxd profile (${res.status}). Make sure your profile is public.`);
@@ -58,7 +63,10 @@ export function parseRSS(xml: string): WatchedFilm[] {
       year: Number(year),
       letterboxdUrl,
       rating: rating ? Number(rating) : undefined,
+      liked: item["letterboxd:memberLike"] === "Yes",
       watchedDate,
+      // Letterboxd publishes the TMDB id, so no fuzzy title matching is needed
+      tmdbId: Number(item["tmdb:movieId"]) > 0 ? Number(item["tmdb:movieId"]) : undefined,
     });
   }
 

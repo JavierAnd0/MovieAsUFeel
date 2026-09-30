@@ -22,6 +22,9 @@ export type TMDBMovieDetail = TMDBMovie & {
   credits?: {
     crew: Array<{ job: string; name: string }>;
   };
+  keywords?: {
+    keywords: Array<{ id: number; name: string }>;
+  };
 };
 
 export type TMDBSearchResponse = {
@@ -38,6 +41,7 @@ export type TMDBDiscoverResponse = {
 
 export type DiscoverParams = {
   with_genres?: string;
+  with_keywords?: string;
   without_genres?: string;
   sort_by: string;
   "vote_average.gte": number;

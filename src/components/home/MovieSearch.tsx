@@ -1,8 +1,10 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useId } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import MovieDetailModal from "./MovieDetailModal";
+import Icon from "@/components/ui/Icon";
+import LoadingSpinner from "@/components/ui/LoadingSpinner";
 
 type SearchResult = {
   id: number;
@@ -11,191 +13,143 @@ type SearchResult = {
   posterPath: string | null;
 };
 
-export default function MovieSearch() {
-  const [query, setQuery]       = useState("");
-  const [results, setResults]   = useState<SearchResult[]>([]);
-  const [loading, setLoading]   = useState(false);
-  const [open, setOpen]         = useState(false);
+export default function MovieSearch({ autoFocus = false }: { autoFocus?: boolean }) {
+  const [query, setQuery] = useState("");
+  const [results, setResults] = useState<SearchResult[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [open, setOpen] = useState(false);
+  const [active, setActive] = useState(-1);
   const [selectedId, setSelectedId] = useState<number | null>(null);
-  const inputRef  = useRef<HTMLInputElement>(null);
-  const timerRef  = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const wrapRef   = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const listId = useId();
 
-  // Debounced search
+  // Debounced search; aborts in-flight requests so late responses never win.
   useEffect(() => {
-    if (timerRef.current) clearTimeout(timerRef.current);
-    if (query.trim().length < 2) { setResults([]); setOpen(false); return; }
+    const q = query.trim();
+    if (q.length < 2) { setResults([]); setOpen(false); return; }
 
-    timerRef.current = setTimeout(async () => {
+    const controller = new AbortController();
+    const timer = setTimeout(async () => {
       setLoading(true);
       try {
-        const res = await fetch(`/api/search?q=${encodeURIComponent(query)}`);
+        const res = await fetch(`/api/search?q=${encodeURIComponent(q)}`, { signal: controller.signal });
         const data = await res.json();
         setResults(data.results ?? []);
+        setActive(-1);
         setOpen(true);
       } catch {
-        setResults([]);
+        if (!controller.signal.aborted) setResults([]);
       } finally {
-        setLoading(false);
+        if (!controller.signal.aborted) setLoading(false);
       }
-    }, 300);
+    }, 280);
 
-    return () => { if (timerRef.current) clearTimeout(timerRef.current); };
+    return () => { clearTimeout(timer); controller.abort(); };
   }, [query]);
 
-  // Close on outside click
   useEffect(() => {
     function handleClick(e: MouseEvent) {
-      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) {
-        setOpen(false);
-      }
+      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) setOpen(false);
     }
     document.addEventListener("mousedown", handleClick);
     return () => document.removeEventListener("mousedown", handleClick);
   }, []);
 
-  function handleSelect(result: SearchResult) {
+  function select(result: SearchResult) {
     setSelectedId(result.id);
     setQuery("");
     setOpen(false);
   }
 
+  function onKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (!open || results.length === 0) return;
+    if (e.key === "ArrowDown") { e.preventDefault(); setActive(i => (i + 1) % results.length); }
+    else if (e.key === "ArrowUp") { e.preventDefault(); setActive(i => (i <= 0 ? results.length - 1 : i - 1)); }
+    else if (e.key === "Enter" && active >= 0) { e.preventDefault(); select(results[active]); }
+    else if (e.key === "Escape") setOpen(false);
+  }
+
+  const showEmpty = open && !loading && results.length === 0 && query.trim().length >= 2;
+
   return (
     <>
-    <div ref={wrapRef} style={{ position: "relative", width: "100%" }}>
-      {/* Input — compact for navbar */}
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 8,
-          padding: "0 12px",
-          height: 42,
-          minHeight: 42,
-          background: "rgba(240,236,227,0.05)",
-          border: open || query ? "1px solid rgba(201,169,110,0.4)" : "1px solid rgba(240,236,227,0.1)",
-          borderRadius: open && results.length > 0 ? "10px 10px 0 0" : 10,
-          transition: "border-color 0.2s, border-radius 0.15s",
-        }}
-      >
-        {/* Search icon */}
-        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="rgba(240,236,227,0.4)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
-          <circle cx="11" cy="11" r="8" />
-          <path d="m21 21-4.35-4.35" />
-        </svg>
+      <div ref={wrapRef} className="relative w-full">
+        <div className="field flex h-10 items-center gap-2 px-3 focus-within:border-laton/60 focus-within:shadow-[0_0_0_3px_rgba(207,164,94,0.12)]">
+          <Icon name="search" size={16} className="shrink-0 text-humo" />
+          <input
+            ref={inputRef}
+            type="search"
+            role="combobox"
+            aria-expanded={open}
+            aria-controls={listId}
+            aria-activedescendant={active >= 0 ? `${listId}-${active}` : undefined}
+            aria-label="Buscar una película"
+            value={query}
+            autoFocus={autoFocus}
+            onChange={e => setQuery(e.target.value)}
+            onFocus={() => results.length > 0 && setOpen(true)}
+            onKeyDown={onKeyDown}
+            placeholder="Buscar una película"
+            autoComplete="off"
+            spellCheck={false}
+            className="min-w-0 flex-1 bg-transparent text-sm text-pantalla outline-none placeholder:text-humo/70 [&::-webkit-search-cancel-button]:hidden"
+          />
+          {loading && <span className="text-laton"><LoadingSpinner size={15} /></span>}
+          {query && !loading && (
+            <button
+              onClick={() => { setQuery(""); setResults([]); setOpen(false); inputRef.current?.focus(); }}
+              aria-label="Borrar búsqueda"
+              className="shrink-0 rounded text-humo hover:text-pantalla"
+            >
+              <Icon name="close" size={15} />
+            </button>
+          )}
+        </div>
 
-        <input
-          ref={inputRef}
-          type="text"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          onFocus={() => results.length > 0 && setOpen(true)}
-          placeholder="Buscar una película..."
-          autoComplete="off"
-          spellCheck={false}
-          style={{
-            flex: 1,
-            background: "none",
-            border: "none",
-            outline: "none",
-            fontSize: 13,
-            color: "#F0ECE3",
-            fontFamily: "inherit",
-          }}
-        />
-
-        {loading && (
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="rgba(201,169,110,0.7)" strokeWidth="2" strokeLinecap="round" style={{ flexShrink: 0, animation: "spin 0.8s linear infinite" }}>
-            <path d="M21 12a9 9 0 1 1-6.219-8.56" />
-          </svg>
-        )}
-
-        {query && !loading && (
-          <button
-            onClick={() => { setQuery(""); setResults([]); setOpen(false); inputRef.current?.focus(); }}
-            style={{ background: "none", border: "none", cursor: "pointer", padding: 0, color: "rgba(240,236,227,0.3)", fontSize: 18, lineHeight: 1, flexShrink: 0 }}
-          >
-            ×
-          </button>
-        )}
+        <AnimatePresence>
+          {(open && results.length > 0) || showEmpty ? (
+            <motion.ul
+              id={listId}
+              role="listbox"
+              initial={{ opacity: 0, y: -4 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -4 }}
+              transition={{ duration: 0.15 }}
+              className="absolute left-0 right-0 top-[calc(100%+6px)] z-[200] max-h-[60vh] overflow-y-auto rounded-xl border border-linea-fuerte bg-sala-2 py-1 shadow-[0_24px_64px_rgba(0,0,0,0.7)]"
+            >
+              {showEmpty && (
+                <li className="px-4 py-3 text-sm text-humo">No encontramos «{query.trim()}». Prueba con el título original.</li>
+              )}
+              {results.map((r, i) => (
+                <li
+                  key={r.id}
+                  id={`${listId}-${i}`}
+                  role="option"
+                  aria-selected={i === active}
+                  onMouseDown={e => e.preventDefault()}
+                  onClick={() => select(r)}
+                  onMouseEnter={() => setActive(i)}
+                  className={`flex cursor-pointer items-center gap-3 px-3 py-2 ${i === active ? "bg-laton/10" : ""}`}
+                >
+                  <div className="h-12 w-8 shrink-0 overflow-hidden rounded-md bg-sala-3">
+                    {r.posterPath && (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={`https://image.tmdb.org/t/p/w92${r.posterPath}`} alt="" className="size-full object-cover" />
+                    )}
+                  </div>
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-medium text-pantalla">{r.title}</p>
+                    {r.year && <p className="text-xs text-humo">{r.year}</p>}
+                  </div>
+                </li>
+              ))}
+            </motion.ul>
+          ) : null}
+        </AnimatePresence>
       </div>
 
-      {/* Dropdown */}
-      <AnimatePresence>
-        {open && results.length > 0 && (
-          <motion.div
-            initial={{ opacity: 0, y: -4 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -4 }}
-            transition={{ duration: 0.15 }}
-            style={{
-              position: "absolute",
-              top: "100%",
-              left: 0,
-              right: 0,
-              background: "#17151E",
-              border: "1px solid rgba(201,169,110,0.3)",
-              borderTop: "1px solid rgba(201,169,110,0.12)",
-              borderRadius: "0 0 10px 10px",
-              overflow: "hidden",
-              zIndex: 200,
-              boxShadow: "0 24px 64px rgba(0,0,0,0.8)",
-            }}
-          >
-            {results.map((r, i) => (
-              <button
-                key={r.id}
-                onClick={() => handleSelect(r)}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 12,
-                  width: "100%",
-                  padding: "10px 16px",
-                  background: "none",
-                  border: "none",
-                  borderBottom: i < results.length - 1 ? "1px solid rgba(240,236,227,0.05)" : "none",
-                  cursor: "pointer",
-                  textAlign: "left",
-                  transition: "background 0.12s",
-                }}
-                onMouseEnter={(e) => { e.currentTarget.style.background = "rgba(201,169,110,0.08)"; }}
-                onMouseLeave={(e) => { e.currentTarget.style.background = "none"; }}
-              >
-                {/* Poster thumb */}
-                <div style={{ width: 32, height: 48, borderRadius: 6, overflow: "hidden", flexShrink: 0, background: "#2a2535" }}>
-                  {r.posterPath && (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img
-                      src={`https://image.tmdb.org/t/p/w92${r.posterPath}`}
-                      alt=""
-                      style={{ width: "100%", height: "100%", objectFit: "cover" }}
-                    />
-                  )}
-                </div>
-                <div>
-                  <div style={{ fontSize: 14, fontWeight: 600, color: "#F0ECE3", marginBottom: 2 }}>
-                    {r.title}
-                  </div>
-                  {r.year && (
-                    <div style={{ fontSize: 12, color: "rgba(240,236,227,0.35)" }}>{r.year}</div>
-                  )}
-                </div>
-                <div style={{ marginLeft: "auto", fontSize: 12, color: "rgba(201,169,110,0.5)", flexShrink: 0 }}>
-                  Ver →
-                </div>
-              </button>
-            ))}
-          </motion.div>
-        )}
-      </AnimatePresence>
-    </div>
-
-    {/* ── Movie detail modal — position:fixed, covers full screen ──── */}
-    <MovieDetailModal
-      movieId={selectedId}
-      onClose={() => setSelectedId(null)}
-    />
+      <MovieDetailModal movieId={selectedId} onClose={() => setSelectedId(null)} />
     </>
   );
 }
