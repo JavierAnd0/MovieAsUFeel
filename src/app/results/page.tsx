@@ -1,191 +1,274 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
-import BrandLogo from "@/components/ui/BrandLogo";
-import MovieGrid from "@/components/results/MovieGrid";
-import ResultsHeader from "@/components/results/ResultsHeader";
+import NavBar, { WatchlistLink } from "@/components/ui/NavBar";
 import LoadingSpinner from "@/components/ui/LoadingSpinner";
-import { MOOD_META } from "@/lib/mood/moodMap";
+import MovieDetailModal from "@/components/home/MovieDetailModal";
+import ResultsHeader from "@/components/results/ResultsHeader";
+import ResultsToolbar, { type SortKey } from "@/components/results/ResultsToolbar";
+import FeaturedMovie from "@/components/results/FeaturedMovie";
+import MovieGrid from "@/components/results/MovieGrid";
+import {
+  DRAFT_STORAGE_KEY, RESULTS_STORAGE_KEY, fetchProfile, fetchRecommendations,
+  parseResultsQuery, readSession, sameQuery, writeSession,
+  type StoredResults,
+} from "@/lib/client/session";
+import { gel } from "@/lib/mood/moodColors";
 import type { TasteProfile } from "@/types/letterboxd";
-import type { MoodCategory } from "@/types/mood";
-import type { RecommendedMovie, RecommendationsResponse } from "@/types/recommendation";
+import type { RecommendedMovie } from "@/types/recommendation";
 
-type StoredData = {
-  profile: TasteProfile;
-  moodCategories: MoodCategory[];
-  result: RecommendationsResponse;
-};
+const LOADING_MESSAGES = [
+  "Leyendo tu diario de Letterboxd",
+  "Cruzando tus géneros con tu estado de ánimo",
+  "Descartando lo que ya has visto",
+  "Eligiendo la función de esta noche",
+];
 
-const MOOD_GLOW: Record<MoodCategory, string> = {
-  happy:      "rgba(255,214,10,0.12)",
-  sad:        "rgba(0,212,255,0.12)",
-  anxious:    "rgba(255,0,110,0.12)",
-  relaxed:    "rgba(131,56,236,0.12)",
-  frustrated: "rgba(255,80,0,0.12)",
-  thoughtful: "rgba(0,180,216,0.12)",
-  excited:    "rgba(255,77,155,0.12)",
-  tired:      "rgba(148,163,184,0.08)",
-};
+type State =
+  | { status: "loading" }
+  | { status: "error"; message: string }
+  | { status: "ready"; data: StoredResults };
 
-function SectionDivider({ count }: { count: number }) {
+function ResultsView() {
+  const router = useRouter();
+  const params = useSearchParams();
+  const query = useMemo(() => parseResultsQuery(new URLSearchParams(params.toString())), [params]);
+
+  const [state, setState] = useState<State>({ status: "loading" });
+  const [attempt, setAttempt] = useState(0);
+  const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [moreLoading, setMoreLoading] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [activeGenre, setActiveGenre] = useState<string | null>(null);
+  const [sort, setSort] = useState<SortKey>("match");
+  const [showSeen, setShowSeen] = useState(false);
+
+  // Load: session cache → draft profile → fetch profile. Works for shared links too.
+  useEffect(() => {
+    if (!query) { router.replace("/"); return; }
+    let cancelled = false;
+
+    (async () => {
+      const cached = readSession<StoredResults>(RESULTS_STORAGE_KEY);
+      if (cached?.result && sameQuery(cached, query)) {
+        setState({ status: "ready", data: cached });
+        return;
+      }
+      setState({ status: "loading" });
+      try {
+        const draft = readSession<{ profile?: TasteProfile }>(DRAFT_STORAGE_KEY);
+        const profile = draft?.profile && draft.profile.username.toLowerCase() === query.username.toLowerCase()
+          ? draft.profile
+          : await fetchProfile(query.username);
+        const result = await fetchRecommendations(profile, query.moods, query.freeText);
+        if (cancelled) return;
+        const data: StoredResults = { ...query, username: profile.username, profile, result, round: 0 };
+        writeSession(RESULTS_STORAGE_KEY, data);
+        setState({ status: "ready", data });
+      } catch (err) {
+        if (!cancelled) setState({ status: "error", message: err instanceof Error ? err.message : "Algo salió mal." });
+      }
+    })();
+
+    return () => { cancelled = true; };
+  }, [query, router, attempt]);
+
+  // Keep the onboarding draft in sync so "Cambiar estado de ánimo" lands on the mood step.
+  useEffect(() => {
+    if (state.status !== "ready") return;
+    const { profile, moods, freeText } = state.data;
+    writeSession(DRAFT_STORAGE_KEY, { step: "mood", username: profile.username, profile, selectedMoods: moods, freeText });
+  }, [state]);
+
+  const loadMore = useCallback(async () => {
+    if (state.status !== "ready") return;
+    const { data } = state;
+    setMoreLoading(true);
+    setNotice(null);
+    try {
+      const round = data.round + 1;
+      const result = await fetchRecommendations(data.profile, data.moods, data.freeText, {
+        round,
+        excludeIds: data.result.movies.map(m => m.tmdbId),
+      });
+      if (!result.movies.some(m => !m.alreadySeen)) {
+        setNotice("No quedan más películas nuevas para esta combinación. Prueba con otro estado de ánimo.");
+        return;
+      }
+      const next: StoredResults = { ...data, result, round };
+      writeSession(RESULTS_STORAGE_KEY, next);
+      setState({ status: "ready", data: next });
+      setActiveGenre(null);
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    } catch (err) {
+      setNotice(err instanceof Error ? err.message : "No se pudieron cargar más películas.");
+    } finally {
+      setMoreLoading(false);
+    }
+  }, [state]);
+
+  if (state.status === "loading") return <LoadingScreen />;
+
+  if (state.status === "error") {
+    return (
+      <CenteredMessage title="No pudimos preparar tu cartelera" body={state.message}>
+        <button onClick={() => setAttempt(a => a + 1)} className="btn btn-primary">Reintentar</button>
+        <Link href="/" className="btn btn-ghost">Volver al inicio</Link>
+      </CenteredMessage>
+    );
+  }
+
+  const { profile, moods, freeText, result } = state.data;
+  const unseen = result.movies.filter(m => !m.alreadySeen);
+  const seen = result.movies.filter(m => m.alreadySeen);
+
+  if (unseen.length === 0 && seen.length === 0) {
+    return (
+      <CenteredMessage
+        title="Nada encaja con esta combinación"
+        body="Prueba con otros estados de ánimo o quita parte del texto que escribiste."
+      >
+        <Link href="/" className="btn btn-primary">Cambiar estado de ánimo</Link>
+      </CenteredMessage>
+    );
+  }
+
+  const [featured, ...rest] = unseen;
+  // With no unseen picks left, the already-seen ones are all there is to show.
+  const includeSeen = showSeen || !featured;
+  const pool = includeSeen ? [...rest, ...seen] : rest;
+  const genres = [...new Set(pool.flatMap(m => m.genres.map(g => g.name)))].sort((a, b) => a.localeCompare(b, "es"));
+  const visible = sortMovies(
+    activeGenre ? pool.filter(m => m.genres.some(g => g.name === activeGenre)) : pool,
+    sort,
+  );
+
   return (
-    <div className="flex items-center gap-4 my-10">
-      <div className="flex-1" style={{ height: 1, background: "rgba(255,255,255,0.07)" }} />
-      <div className="flex items-center gap-2 px-4 py-2 rounded-full text-sm font-semibold" style={{
-        background: "rgba(255,255,255,0.04)",
-        border: "1px solid rgba(255,255,255,0.1)",
-        color: "rgba(255,255,255,0.45)",
-      }}>
-        <span>✓</span>
-        <span className="hidden sm:inline">También encajan · ya las viste ({count})</span>
-        <span className="sm:hidden">Ya vistas ({count})</span>
+    <div className="relative min-h-dvh">
+      {moods.slice(0, 2).map((m, i) => (
+        <div
+          key={m}
+          className="light-spill"
+          style={i === 0
+            ? { top: -200, left: -200, width: "clamp(320px, 50vw, 680px)", height: "clamp(320px, 50vw, 680px)", background: gel(m, 0.12) }
+            : { bottom: -160, right: -160, width: "clamp(280px, 40vw, 560px)", height: "clamp(280px, 40vw, 560px)", background: gel(m, 0.1) }}
+        />
+      ))}
+
+      <div className="relative z-10 mx-auto max-w-7xl px-4 pb-16 pt-4 sm:px-6 sm:pt-6">
+        <NavBar right={<WatchlistLink />} />
+
+        <div className="mt-10 sm:mt-14">
+          <ResultsHeader
+            profile={profile}
+            moods={moods}
+            freeText={freeText}
+            newCount={unseen.length}
+            onMore={loadMore}
+            moreLoading={moreLoading}
+          />
+          {notice && <p role="status" className="alert mt-6">{notice}</p>}
+        </div>
+
+        {featured && (
+          <div className="mt-10">
+            <FeaturedMovie key={featured.tmdbId} movie={featured} onSelect={setSelectedId} />
+          </div>
+        )}
+
+        {(rest.length > 0 || seen.length > 0) && (
+          <section className="mt-14" aria-labelledby="more-title">
+            <h2 id="more-title" className="font-display mb-5 text-4xl text-pantalla">
+              {featured ? "También para esta noche" : "Ya las viste, pero encajan"}
+            </h2>
+            <ResultsToolbar
+              genres={genres}
+              activeGenre={activeGenre}
+              onGenreChange={setActiveGenre}
+              sort={sort}
+              onSortChange={setSort}
+              seenCount={featured ? seen.length : 0}
+              showSeen={includeSeen}
+              onShowSeenChange={setShowSeen}
+            />
+            <div className="mt-8">
+              {visible.length > 0 ? (
+                <MovieGrid movies={visible} onSelect={setSelectedId} />
+              ) : (
+                <p className="py-10 text-center text-sm text-humo">
+                  Ninguna película de {activeGenre?.toLowerCase()} en esta tanda.{" "}
+                  <button onClick={() => setActiveGenre(null)} className="text-laton underline underline-offset-4">Ver todos los géneros</button>
+                </p>
+              )}
+            </div>
+          </section>
+        )}
+
+        <div className="mt-16 flex flex-col items-center gap-3 text-center">
+          <p className="text-sm text-humo">¿Ninguna te convence?</p>
+          <button onClick={loadMore} disabled={moreLoading} className="btn btn-ghost">
+            {moreLoading && <LoadingSpinner size={15} />}
+            {moreLoading ? "Buscando" : "Ver otras películas"}
+          </button>
+        </div>
+
+        <footer className="mt-16 text-center text-xs text-humo/60">
+          Datos de películas de{" "}
+          <a href="https://www.themoviedb.org" target="_blank" rel="noopener noreferrer" className="underline underline-offset-2 hover:text-humo">
+            The Movie Database (TMDB)
+          </a>
+        </footer>
       </div>
-      <div className="flex-1" style={{ height: 1, background: "rgba(255,255,255,0.07)" }} />
+
+      <MovieDetailModal movieId={selectedId} onClose={() => setSelectedId(null)} />
+    </div>
+  );
+}
+
+function sortMovies(movies: RecommendedMovie[], sort: SortKey): RecommendedMovie[] {
+  const sorted = [...movies];
+  if (sort === "rating") sorted.sort((a, b) => b.voteAverage - a.voteAverage);
+  else if (sort === "year") sorted.sort((a, b) => b.year - a.year);
+  else sorted.sort((a, b) => Number(a.alreadySeen) - Number(b.alreadySeen) || b.score - a.score);
+  return sorted;
+}
+
+function LoadingScreen() {
+  const [index, setIndex] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => setIndex(i => (i + 1) % LOADING_MESSAGES.length), 1800);
+    return () => clearInterval(id);
+  }, []);
+
+  return (
+    <div className="flex min-h-dvh flex-col items-center justify-center gap-6 px-6 text-center" role="status" aria-live="polite">
+      <span className="text-laton"><LoadingSpinner size={32} /></span>
+      <p key={index} className="font-display text-[clamp(32px,5vw,56px)] text-pantalla animate-[fadeIn_0.5s_ease]">
+        {LOADING_MESSAGES[index]}
+      </p>
+    </div>
+  );
+}
+
+function CenteredMessage({ title, body, children }: { title: string; body: string; children: React.ReactNode }) {
+  return (
+    <div className="flex min-h-dvh items-center justify-center px-5">
+      <div className="max-w-md text-center">
+        <h1 className="font-display text-5xl text-pantalla">{title}</h1>
+        <p className="mb-8 mt-4 text-[15px] leading-relaxed text-humo">{body}</p>
+        <div className="flex flex-wrap justify-center gap-2">{children}</div>
+      </div>
     </div>
   );
 }
 
 export default function ResultsPage() {
-  const router = useRouter();
-  const [data,    setData]    = useState<StoredData | null>(null);
-  const [error,   setError]   = useState<string | null>(null);
-  const [visible, setVisible] = useState(false);
-
-  useEffect(() => {
-    const raw = sessionStorage.getItem("movieasufeel_results");
-    if (!raw) { router.replace("/"); return; }
-    try {
-      setData(JSON.parse(raw) as StoredData);
-      setTimeout(() => setVisible(true), 50);
-    } catch {
-      setError("No se pudieron cargar los resultados.");
-    }
-  }, [router]);
-
-  // ── Loading ──────────────────────────────────────────────────────────────
-  if (!data && !error) {
-    return (
-      <div className="min-h-dvh bg-[#0a0a0f] flex items-center justify-center">
-        <div style={{ color: "rgba(0,212,255,0.7)" }}>
-          <LoadingSpinner size={36} />
-        </div>
-      </div>
-    );
-  }
-
-  // ── Error ─────────────────────────────────────────────────────────────────
-  if (error || !data) {
-    return (
-      <div className="min-h-dvh bg-[#0a0a0f] flex items-center justify-center px-4">
-        <div className="text-center max-w-md">
-          <p className="text-4xl mb-4">⚠️</p>
-          <p className="text-sm mb-6" style={{ color: "rgba(255,255,255,0.5)" }}>{error}</p>
-          <Link href="/" className="inline-flex items-center justify-center h-11 px-6 rounded-xl font-bold text-sm text-[#0a0a0f]" style={{ background: "linear-gradient(to right, #00d4ff, #8338ec)" }}>
-            Volver al inicio
-          </Link>
-        </div>
-      </div>
-    );
-  }
-
-  const { profile, moodCategories, result } = data;
-
-  const newMovies:  RecommendedMovie[] = result.movies.filter(m => !m.alreadySeen);
-  const seenMovies: RecommendedMovie[] = result.movies.filter(m =>  m.alreadySeen);
-
-  // ── Empty ─────────────────────────────────────────────────────────────────
-  if (newMovies.length === 0 && seenMovies.length === 0) {
-    return (
-      <div className="min-h-dvh bg-[#0a0a0f] flex items-center justify-center px-4">
-        <div className="text-center max-w-md">
-          <p className="text-5xl mb-5">😕</p>
-          <h2 className="text-xl font-bold text-white mb-2">Sin resultados por ahora</h2>
-          <p className="text-sm mb-8" style={{ color: "rgba(255,255,255,0.5)" }}>
-            No encontramos películas para esta combinación. Prueba con un estado de ánimo diferente.
-          </p>
-          <Link href="/" className="inline-flex h-11 items-center justify-center rounded-xl px-6 text-sm font-bold text-[#0a0a0f]" style={{ background: "linear-gradient(135deg, #C9A96E, #A07840)" }}>
-            Ajustar selección
-          </Link>
-        </div>
-      </div>
-    );
-  }
-
-  const glow1 = moodCategories[0] ? MOOD_GLOW[moodCategories[0]] : "rgba(131,56,236,0.1)";
-  const glow2 = moodCategories[1] ? MOOD_GLOW[moodCategories[1]] : null;
-
   return (
-    <div
-      className="min-h-dvh bg-[#0a0a0f]"
-      style={{ opacity: visible ? 1 : 0, transform: visible ? "translateY(0)" : "translateY(10px)", transition: "opacity 0.35s ease, transform 0.35s ease" }}
-    >
-      {/* Background mood glows — responsive size */}
-      <div className="fixed pointer-events-none" style={{ top: -150, left: -150, width: "clamp(300px, 50vw, 600px)", height: "clamp(300px, 50vw, 600px)", background: `radial-gradient(ellipse at center, ${glow1} 0%, transparent 65%)`, filter: "blur(60px)", zIndex: 0 }} />
-      {glow2 && (
-        <div className="fixed pointer-events-none" style={{ bottom: -100, right: -100, width: "clamp(250px, 40vw, 500px)", height: "clamp(250px, 40vw, 500px)", background: `radial-gradient(ellipse at center, ${glow2} 0%, transparent 65%)`, filter: "blur(60px)", zIndex: 0 }} />
-      )}
-
-      <div className="relative z-10 mx-auto max-w-6xl px-4 py-8 sm:py-12">
-
-        {/* Navbar */}
-        <nav className="mb-8 flex h-auto min-h-14 items-center justify-between gap-3 rounded-2xl px-4 py-3 sm:h-14 sm:px-6 sm:py-0" style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)", backdropFilter: "blur(18px)" }}>
-          <Link href="/" aria-label="Volver a CineMood"><BrandLogo /></Link>
-
-          <div className="hidden sm:flex items-center gap-2">
-            {moodCategories.map(m => (
-              <span key={m} className="text-lg" title={MOOD_META[m].label}>{MOOD_META[m].emoji}</span>
-            ))}
-            <span className="text-sm ml-1" style={{ color: "rgba(255,255,255,0.35)" }}>
-              · {newMovies.length} recomendaciones
-              {seenMovies.length > 0 && ` · ${seenMovies.length} ya vistas`}
-            </span>
-          </div>
-
-          <Link
-            href="/"
-            className="whitespace-nowrap rounded-xl px-3 py-2 text-sm font-medium transition-all sm:px-4"
-            style={{ color: "rgba(255,255,255,0.6)", border: "1px solid rgba(255,255,255,0.1)", background: "rgba(255,255,255,0.04)" }}
-            onMouseEnter={e => { (e.currentTarget as HTMLAnchorElement).style.background = "rgba(255,255,255,0.08)"; }}
-            onMouseLeave={e => { (e.currentTarget as HTMLAnchorElement).style.background = "rgba(255,255,255,0.04)"; }}
-          >
-            Ajustar mood
-          </Link>
-        </nav>
-
-        {/* Results header */}
-        <div className="mb-8">
-          <ResultsHeader profile={profile} moodCategories={moodCategories} result={result} newCount={newMovies.length} seenCount={seenMovies.length} />
-        </div>
-
-        {/* ── New movies section ── */}
-        {newMovies.length > 0 && <MovieGrid movies={newMovies} />}
-
-        {/* ── Already-seen section ── */}
-        {seenMovies.length > 0 && (
-          <>
-            <SectionDivider count={seenMovies.length} />
-            <MovieGrid movies={seenMovies} />
-          </>
-        )}
-
-        {/* Footer */}
-        <p className="mt-14 text-center text-xs" style={{ color: "rgba(255,255,255,0.18)" }}>
-          Datos de películas por{" "}
-          <a
-            href="https://www.themoviedb.org"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="underline transition-colors"
-            style={{ textDecorationColor: "rgba(255,255,255,0.15)", color: "rgba(255,255,255,0.18)" }}
-            onMouseEnter={e => { (e.currentTarget as HTMLAnchorElement).style.color = "rgba(255,255,255,0.45)"; }}
-            onMouseLeave={e => { (e.currentTarget as HTMLAnchorElement).style.color = "rgba(255,255,255,0.18)"; }}
-          >
-            The Movie Database (TMDB)
-          </a>
-        </p>
-      </div>
-    </div>
+    <Suspense fallback={<LoadingScreen />}>
+      <ResultsView />
+    </Suspense>
   );
 }
+
