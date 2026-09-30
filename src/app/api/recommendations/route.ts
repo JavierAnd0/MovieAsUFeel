@@ -89,6 +89,9 @@ function sanitizeTasteProfile(value: unknown): TasteProfile | null {
     genreAffinity,
     seeds,
     languages,
+    ...(typeof value.typicalVotes === "number" && Number.isFinite(value.typicalVotes) && value.typicalVotes > 0
+      ? { typicalVotes: Math.round(value.typicalVotes) }
+      : {}),
     topDirectors: Array.isArray(value.topDirectors)
       ? value.topDirectors.filter((name): name is string => typeof name === "string").slice(0, 20)
       : [],

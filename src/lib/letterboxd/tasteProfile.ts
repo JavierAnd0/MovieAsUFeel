@@ -143,6 +143,9 @@ export async function buildTasteProfile(
     .sort((a, b) => b[1] - a[1])
     .map(([lang]) => lang);
 
+  const voteCounts = enriched.flatMap((f) => (f.voteCount ? [f.voteCount] : [])).sort((a, b) => a - b);
+  const typicalVotes = voteCounts.length >= 5 ? voteCounts[Math.floor(voteCounts.length / 2)] : undefined;
+
   const recentGenres = [...new Set(enriched.slice(0, 10).flatMap((f) => f.genreIds ?? []))];
   const watchedTmdbIds = [...new Set(enriched.filter((f) => f.tmdbId !== undefined).map((f) => f.tmdbId as number))];
 
@@ -155,6 +158,7 @@ export async function buildTasteProfile(
     genreAffinity,
     seeds,
     languages,
+    typicalVotes,
     topDirectors: [],
     watchedTmdbIds,
     recentGenres,

@@ -1,8 +1,9 @@
 import { discoverMovies, getGenreList, getMovieDetail, getMovieRecommendations, tmdbMovieUrl } from "@/lib/tmdb/client";
 import { MOOD_MAP } from "@/lib/mood/moodMap";
 import { KEYWORD_LABEL, mergeMoodProfiles, type MoodProfile } from "@/lib/mood/moodProfile";
-import { analyzeText, type TextBoosts } from "@/lib/mood/textAnalyzer";
+import { analyzeText } from "@/lib/mood/textAnalyzer";
 import { analyzeTextWithAI } from "@/lib/mood/aiTextAnalyzer";
+import { NO_TEXT, resolveTextIntent, type TextBoosts } from "@/lib/mood/textResolver";
 import type { SeedFilm, TasteProfile } from "@/types/letterboxd";
 import type { MoodInput } from "@/types/mood";
 import type { TMDBMovie, DiscoverParams } from "@/types/tmdb";
@@ -15,6 +16,7 @@ import type { RecommendedMovie, RecommendationsResponse } from "@/types/recommen
  *      a. "more like the films you loved" — TMDB recommendations for the user's seeds
  *      b. films tagged with the mood's tone/theme keywords
  *      c. well-known films in the mood's genres
+ *      d. whatever the user asked for in words: themes, reference films, people
  * 2. Score every candidate on taste, mood and quality using list data only.
  * 3. Load details (keywords, runtime) for the best ~50 and score them again,
  *    now with real evidence of tone.
@@ -23,6 +25,8 @@ import type { RecommendedMovie, RecommendationsResponse } from "@/types/recommen
  */
 
 const WEIGHTS = { taste: 0.36, mood: 0.40, quality: 0.24 };
+/** When the user asks for something specific, matching it is worth this share of the score. */
+const TEXT_WEIGHT = 0.45;
 
 const SEEDS_PER_ROUND = 6;
 const FINALISTS_UNSEEN = 40;
@@ -30,6 +34,8 @@ const FINALISTS_SEEN = 12;
 const RESULTS_UNSEEN = 12;
 const RESULTS_SEEN = 8;
 const MIN_VOTES = 80;
+/** Niche requests ("terror analógico") live among little-voted films. */
+const MIN_VOTES_TEXT = 15;
 
 const clamp01 = (n: number) => Math.max(0, Math.min(1, n));
 
@@ -38,9 +44,13 @@ type Candidate = {
   seeds: SeedFilm[];         // seeds whose recommendations include this film
   fromKeywords: boolean;     // came from the mood-keyword query
   keywordHits?: number[];    // mood keywords confirmed on the film (after details load)
+  // How the film relates to the user's free text
+  text: { example: boolean; keywordSource: boolean; similarTo?: string; person?: string };
+  textKeywordHits?: number;  // requested keywords confirmed on the film
+  rejected?: boolean;        // carries a keyword the user asked to avoid
   runtime?: number | null;
   score: number;
-  parts: { taste: number; mood: number; quality: number };
+  parts: { taste: number; mood: number; quality: number; text: number };
 };
 
 export type GenerateOptions = {
@@ -129,18 +139,70 @@ function weightedRating(movie: TMDBMovie): number {
 
 const qualityScore = (movie: TMDBMovie) => clamp01((weightedRating(movie) - 5.8) / 2.6);
 
+/**
+ * People whose diary is full of little-seen films rarely want the same twenty
+ * canonical titles; people who watch the hits do. Penalise films far more
+ * popular than what this user usually watches.
+ */
+function mainstreamPenalty(movie: TMDBMovie, profile: TasteProfile): number {
+  if (!profile.typicalVotes) return 0;
+  const ordersAbove = Math.log10(Math.max(movie.vote_count, 1)) - Math.log10(Math.max(profile.typicalVotes, 50));
+  return Math.max(0, Math.min(0.1, (ordersAbove - 1) * 0.08));
+}
+
+// ─── Free text ──────────────────────────────────────────────────────────────
+
+/** How well the film answers what the user typed, in [0, 1]. */
+function textScore(c: Candidate, text: TextBoosts): number {
+  const genreMatches = c.movie.genre_ids.filter((id) => text.genreIds.includes(id)).length;
+  // "terror analógico" names a genre and a style: a found-footage comedy only half fits
+  const genreFactor = text.genreIds.length > 0 && genreMatches === 0 ? 0.5 : 1;
+
+  if (c.text.example || c.text.person) return 1;
+  if (c.textKeywordHits !== undefined && c.textKeywordHits > 0) {
+    return genreFactor * Math.min(1, 0.8 + 0.1 * (c.textKeywordHits - 1));
+  }
+  // Surfaced by the keyword query but details haven't confirmed it (yet)
+  if (c.text.keywordSource && c.textKeywordHits === undefined) return genreFactor * 0.7;
+  if (c.text.similarTo) return genreFactor * 0.65;
+  return Math.min(0.3, genreMatches * 0.2);
+}
+
 // ─── Retrieval ──────────────────────────────────────────────────────────────
 
+// What a given sentence means doesn't change between requests; remembering it
+// makes "Ver otras" instant and spares the rate-limited free models.
+const TEXT_CACHE_TTL_MS = 60 * 60 * 1000;
+const TEXT_CACHE_MAX = 300;
+const textCache = new Map<string, { at: number; boosts: TextBoosts }>();
+
 async function analyzeFreeText(freeText?: string): Promise<TextBoosts> {
-  if (!freeText) return { genreIds: [], excludeGenreIds: [], overrides: {} };
+  if (!freeText) return NO_TEXT;
+
+  const cacheKey = freeText.trim().toLowerCase().replace(/\s+/g, " ");
+  const cached = textCache.get(cacheKey);
+  if (cached && Date.now() - cached.at < TEXT_CACHE_TTL_MS) return cached.boosts;
+
+  const rules = analyzeText(freeText);
   if (process.env.OPENROUTER_API_KEY) {
     try {
-      return await analyzeTextWithAI(freeText);
+      const ai = await analyzeTextWithAI(freeText);
+      // The rule-based themes are few but dependable; keep them alongside the model's
+      const boosts = await resolveTextIntent({
+        ...ai,
+        genreIds: [...new Set([...ai.genreIds, ...rules.genreIds])].filter((id) => !ai.excludeGenreIds.includes(id)),
+        keywords: [...new Set([...ai.keywords, ...rules.keywords])],
+        excludeKeywords: [...new Set([...ai.excludeKeywords, ...rules.excludeKeywords])],
+      });
+      if (textCache.size >= TEXT_CACHE_MAX) textCache.delete(textCache.keys().next().value!);
+      textCache.set(cacheKey, { at: Date.now(), boosts });
+      return boosts;
     } catch (err) {
-      console.warn("[recommendationEngine] AI text analysis failed, falling back to keyword analyzer:", err);
+      console.warn("[recommendationEngine] AI text analysis failed, using the rule-based analyzer:", err instanceof Error ? err.message : err);
     }
   }
-  return analyzeText(freeText);
+  // Not cached: next time the model may be reachable and do better
+  return resolveTextIntent(rules);
 }
 
 /** Seeds that suit tonight's mood go first; among equals, the better rated. */
@@ -175,13 +237,22 @@ async function retrieveCandidates(
   round: number,
 ): Promise<Map<number, Candidate>> {
   const candidates = new Map<number, Candidate>();
-  const add = (movie: TMDBMovie, from: { seed?: SeedFilm; keywords?: boolean }) => {
-    const existing = candidates.get(movie.id)
-      ?? { movie, seeds: [], fromKeywords: false, score: 0, parts: { taste: 0, mood: 0, quality: 0 } };
+  type Source = { seed?: SeedFilm; keywords?: boolean; text?: Partial<Candidate["text"]> };
+  const add = (movie: TMDBMovie, from: Source) => {
+    const existing: Candidate = candidates.get(movie.id) ?? {
+      movie, seeds: [], fromKeywords: false,
+      text: { example: false, keywordSource: false },
+      score: 0, parts: { taste: 0, mood: 0, quality: 0, text: 0 },
+    };
     if (from.seed) existing.seeds.push(from.seed);
     if (from.keywords) existing.fromKeywords = true;
+    if (from.text) existing.text = { ...existing.text, ...from.text };
     candidates.set(movie.id, existing);
   };
+  const collect = (request: Promise<{ results: TMDBMovie[] }>, from: (m: TMDBMovie) => Source | null) =>
+    request
+      .then((res) => res.results.forEach((m) => { const source = from(m); if (source) add(m, source); }))
+      .catch(() => {});
 
   const base: Omit<DiscoverParams, "page"> = {
     sort_by: "vote_count.desc",
@@ -196,7 +267,33 @@ async function retrieveCandidates(
 
   const { seeds, page: seedPage } = pickSeeds(profile, mood, round);
 
+  // d. What the user asked for in words. These queries ignore the mood's genres:
+  //    "terror analógico" on a tired night still means analog horror.
+  const textBase: Omit<DiscoverParams, "page"> = { ...base, "vote_average.gte": 0, "vote_count.gte": MIN_VOTES_TEXT };
+  const references = new Set([...text.similarTo, ...text.examples].map((m) => m.id));
+  if (round === 0) text.examples.forEach((m) => add(m, { text: { example: true } }));
+  const textQueries: Promise<void>[] = [
+    ...(text.keywordIds.length > 0
+      ? [
+          { ...textBase, ...explicitGenres, with_keywords: text.keywordIds.join("|"), sort_by: "popularity.desc", page: round + 1 },
+          { ...textBase, ...explicitGenres, with_keywords: text.keywordIds.join("|"), sort_by: "vote_average.desc", "vote_count.gte": 60, page: round + 1 },
+        ].map((params) => collect(discoverMovies(params), () => ({ text: { keywordSource: true } })))
+      : []),
+    ...text.people.map((person) =>
+      collect(
+        discoverMovies({ ...textBase, with_people: String(person.id), sort_by: "vote_count.desc", page: round + 1 }),
+        () => ({ text: { person: `${person.directs ? "De" : "Con"} ${person.name}` } }),
+      ),
+    ),
+    // Films like the ones named, never the named films themselves
+    ...[...text.similarTo, ...text.examples.slice(0, 3)].map((ref) =>
+      collect(getMovieRecommendations(ref.id, round + 1), (m) => (references.has(m.id) ? null : { text: { similarTo: ref.title } })),
+    ),
+  ];
+  text.similarTo.forEach((m) => candidates.delete(m.id));
+
   await Promise.all([
+    ...textQueries,
     // a. More like the films you loved
     ...seeds.map((seed) =>
       getMovieRecommendations(seed.tmdbId, seedPage)
@@ -226,15 +323,21 @@ async function retrieveCandidates(
 }
 
 /** Constraints that also apply to seed recommendations, which bypass the discover filters. */
-function passesHardFilters(movie: TMDBMovie, text: TextBoosts, excluded: Set<number>): boolean {
+function passesHardFilters(c: Candidate, text: TextBoosts, excluded: Set<number>): boolean {
+  const { movie } = c;
   if (excluded.has(movie.id)) return false;
-  if (!movie.release_date || movie.vote_count < MIN_VOTES) return false;
+  if (text.similarTo.some((m) => m.id === movie.id)) return false;
+  const fromText = c.text.example || c.text.keywordSource || !!c.text.person;
+  if (!movie.release_date || movie.vote_count < (fromText ? MIN_VOTES_TEXT : MIN_VOTES)) return false;
+  // Matching the request doesn't excuse a film almost nobody liked
+  if (fromText && !c.text.example && movie.vote_average < 5.5) return false;
   if (movie.genre_ids.some((id) => text.excludeGenreIds.includes(id))) return false;
 
   const o = text.overrides;
   if (o["primary_release_date.gte"] && movie.release_date < o["primary_release_date.gte"]) return false;
   if (o["primary_release_date.lte"] && movie.release_date > o["primary_release_date.lte"]) return false;
   if (o["vote_average.gte"] && movie.vote_average < o["vote_average.gte"]) return false;
+  if (o.with_original_language && movie.original_language !== o.with_original_language) return false;
   return true;
 }
 
@@ -275,8 +378,12 @@ function diversify(ranked: Candidate[], count: number): Candidate[] {
 
 // ─── Explanation ────────────────────────────────────────────────────────────
 
-function buildBlurb(c: Candidate, genreNames: Map<number, string>, affinity: Map<number, number>): string {
+function buildBlurb(c: Candidate, genreNames: Map<number, string>, affinity: Map<number, number>, request: string): string {
   const parts: string[] = [];
+
+  if (c.text.person) parts.push(c.text.person);
+  else if (c.text.example || (c.textKeywordHits ?? 0) > 0) parts.push(request ? `Coincide con «${request}»` : "Coincide con lo que pediste");
+  else if (c.text.similarTo) parts.push(`Parecida a ${c.text.similarTo}`);
 
   const seed = [...c.seeds].sort((a, b) => b.rating - a.rating)[0];
   if (seed) {
@@ -290,7 +397,7 @@ function buildBlurb(c: Candidate, genreNames: Map<number, string>, affinity: Map
   }
 
   const themes = (c.keywordHits ?? []).map((id) => KEYWORD_LABEL[id]).filter(Boolean).slice(0, 2);
-  if (themes.length > 0) parts.push(`Con ${themes.join(" y ")}`);
+  if (themes.length > 0) parts.push(`Con ${themes.join(/^h?i/i.test(themes[1] ?? "") ? " e " : " y ")}`);
 
   if (weightedRating(c.movie) >= 7.8) parts.push("Muy bien valorada");
 
@@ -302,6 +409,7 @@ function toRecommendedMovie(
   alreadySeen: boolean,
   genreNames: Map<number, string>,
   affinity: Map<number, number>,
+  request: string,
 ): RecommendedMovie {
   const { movie } = c;
   return {
@@ -315,7 +423,7 @@ function toRecommendedMovie(
       .map((id) => ({ id, name: genreNames.get(id) ?? "" }))
       .filter((g) => g.name),
     overview: movie.overview,
-    blurb: buildBlurb(c, genreNames, affinity),
+    blurb: buildBlurb(c, genreNames, affinity, request),
     score: Math.round(c.score * 100),
     tmdbUrl: tmdbMovieUrl(movie.id),
     alreadySeen,
@@ -333,7 +441,14 @@ export async function generateRecommendations(
   const genreNames = new Map<number, string>(genreList.map((g) => [g.id, g.name]));
 
   const mood = mergeMoodProfiles(moodInput.categories);
+  // A genre the user asks for by name can't also count against the mood
+  for (const id of text.genreIds) mood.genreWeights[id] = Math.max(mood.genreWeights[id] ?? 0, 0.8);
   const moodKeywords = new Set(mood.keywordIds);
+  const textKeywords = new Set(text.keywordIds);
+  const avoidKeywords = new Set(text.excludeKeywordIds);
+  // Quoted back in the explanation only when short enough to read as a label
+  const typed = (moodInput.freeText ?? "").trim();
+  const request = typed.length <= 32 ? typed : "";
   const affinity = genreAffinityOf(tasteProfile);
   const maxAffinity = Math.max(...affinity.values(), 0.1);
   const discoverGenres = pickDiscoverGenres(mood, affinity, text.genreIds);
@@ -342,22 +457,29 @@ export async function generateRecommendations(
 
   const excluded = new Set(excludeIds);
   const watched = new Set(tasteProfile.watchedTmdbIds);
-  const candidates = [...retrieved.values()].filter((c) => passesHardFilters(c.movie, text, excluded));
+  const candidates = [...retrieved.values()].filter((c) => passesHardFilters(c, text, excluded));
 
   const rescore = (c: Candidate) => {
     const taste = tasteScore(c, affinity, maxAffinity, tasteProfile);
     const moodFit = moodScore(c, mood);
     const quality = qualityScore(c.movie);
 
-    // What the user asked for in words outranks what we inferred
-    const textMatches = c.movie.genre_ids.filter((id) => text.genreIds.includes(id)).length;
-    const textBoost = Math.min(0.12, textMatches * 0.08);
+    const textFit = textScore(c, text);
 
-    let score = WEIGHTS.taste * taste + WEIGHTS.mood * moodFit + WEIGHTS.quality * quality + textBoost;
-    // A film that clashes with the mood is not rescued by being great or on-taste
-    if (moodGenreFit(c.movie.genre_ids, mood) <= -0.5) score *= 0.6;
+    let score = WEIGHTS.taste * taste + WEIGHTS.mood * moodFit + WEIGHTS.quality * quality
+      - mainstreamPenalty(c.movie, tasteProfile);
 
-    c.parts = { taste, mood: moodFit, quality };
+    // What the user asked for in words outranks what we inferred. A specific
+    // request takes a fixed share of the score; a generic one is a small bonus.
+    score = text.specific
+      ? TEXT_WEIGHT * textFit + (1 - TEXT_WEIGHT) * score
+      : score + 0.4 * textFit;
+
+    // A film that clashes with the mood is not rescued by being great or on-taste —
+    // unless it is exactly what was asked for.
+    if (textFit < 0.6 && moodGenreFit(c.movie.genre_ids, mood) <= -0.5) score *= 0.6;
+
+    c.parts = { taste, mood: moodFit, quality, text: textFit };
     c.score = clamp01(score);
   };
 
@@ -376,14 +498,17 @@ export async function generateRecommendations(
       try {
         const detail = await getMovieDetail(c.movie.id, true);
         c.runtime = detail.runtime;
-        c.keywordHits = (detail.keywords?.keywords ?? []).map((k) => k.id).filter((id) => moodKeywords.has(id));
+        const keywordIds = (detail.keywords?.keywords ?? []).map((k) => k.id);
+        c.keywordHits = keywordIds.filter((id) => moodKeywords.has(id));
+        c.textKeywordHits = keywordIds.filter((id) => textKeywords.has(id)).length;
+        c.rejected = keywordIds.some((id) => avoidKeywords.has(id));
       } catch {
         // Keep the first-pass score for this one
       }
     }),
   );
 
-  const ranked = finalists.filter((c) => passesRuntime(c.runtime, text));
+  const ranked = finalists.filter((c) => !c.rejected && passesRuntime(c.runtime, text));
   ranked.forEach(rescore);
   ranked.sort((a, b) => b.score - a.score);
 
@@ -392,8 +517,8 @@ export async function generateRecommendations(
 
   return {
     movies: [
-      ...unseen.map((c) => toRecommendedMovie(c, false, genreNames, affinity)),
-      ...seen.map((c) => toRecommendedMovie(c, true, genreNames, affinity)),
+      ...unseen.map((c) => toRecommendedMovie(c, false, genreNames, affinity, request)),
+      ...seen.map((c) => toRecommendedMovie(c, true, genreNames, affinity, request)),
     ],
     meta: {
       mood: moodInput.categories.map((m) => MOOD_MAP[m].toneLabel).join(" y "),

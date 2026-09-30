@@ -31,6 +31,8 @@ export type TasteProfile = {
   seeds: SeedFilm[];
   /** Original languages that make up a meaningful share of the diary. */
   languages: string[];
+  /** Median TMDB vote count of the diary: how mainstream this person's viewing is. */
+  typicalVotes?: number;
   topDirectors: string[];
   watchedTmdbIds: number[];
   recentGenres: number[];

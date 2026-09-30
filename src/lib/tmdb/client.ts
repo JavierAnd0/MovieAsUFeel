@@ -52,6 +52,18 @@ export async function discoverMovies(
   return tmdbFetch<TMDBDiscoverResponse>("/discover/movie", { language: "es-ES", ...flat });
 }
 
+export async function searchKeyword(query: string): Promise<Array<{ id: number; name: string }>> {
+  const data = await tmdbFetch<{ results: Array<{ id: number; name: string }> }>("/search/keyword", { query });
+  return data.results;
+}
+
+export type TMDBPerson = { id: number; name: string; popularity: number; known_for_department?: string };
+
+export async function searchPerson(query: string): Promise<TMDBPerson[]> {
+  const data = await tmdbFetch<{ results: TMDBPerson[] }>("/search/person", { query });
+  return data.results;
+}
+
 /** Core facts about one film. `withKeywords` also loads its TMDB keywords. */
 export async function getMovieDetail(id: number, withKeywords = false): Promise<TMDBMovieDetail> {
   return tmdbFetch<TMDBMovieDetail>(`/movie/${id}`, {

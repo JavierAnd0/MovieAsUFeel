@@ -6,6 +6,7 @@ export type TMDBGenre = {
 export type TMDBMovie = {
   id: number;
   title: string;
+  original_title?: string;
   release_date: string;
   poster_path: string | null;
   vote_average: number;
@@ -42,6 +43,7 @@ export type TMDBDiscoverResponse = {
 export type DiscoverParams = {
   with_genres?: string;
   with_keywords?: string;
+  with_people?: string;
   without_genres?: string;
   sort_by: string;
   "vote_average.gte": number;
