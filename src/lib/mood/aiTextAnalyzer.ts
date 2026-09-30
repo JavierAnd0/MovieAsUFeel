@@ -1,16 +1,24 @@
 import type { DiscoverParams } from "@/types/tmdb";
-import type { TextBoosts } from "./textAnalyzer";
+import { EMPTY_INTENT, type TextIntent } from "./textAnalyzer";
 
 // ─── Model fallback chain ─────────────────────────────────────────────────
 // Tried in order — skips to the next on 429 / provider error.
-// All are free tier on OpenRouter.
-const MODEL_CHAIN = [
-  "qwen/qwen3.6-plus:free",
-  "meta-llama/llama-3.3-70b-instruct:free",
-  "google/gemma-3-27b-it:free",
-  "google/gemma-3-12b-it:free",
+// Free models on OpenRouter are retired without notice: when every request
+// falls back to the keyword analyzer, this list is the first thing to check
+// (https://openrouter.ai/models?max_price=0). OPENROUTER_MODELS overrides it
+// without a deploy, as a comma-separated list.
+const DEFAULT_MODEL_CHAIN = [
+  "qwen/qwen3.8-27b:free",
+  "google/gemma-4-26b-a4b-it:free",
+  "google/gemma-4-31b-it:free",
+  "dots-studio/dots-3-note-preview:free",
   "nvidia/nemotron-3-super-120b-a12b:free",
 ];
+
+function modelChain(): string[] {
+  const fromEnv = (process.env.OPENROUTER_MODELS ?? "").split(",").map((m) => m.trim()).filter(Boolean);
+  return fromEnv.length > 0 ? fromEnv : DEFAULT_MODEL_CHAIN;
+}
 
 // ─── TMDB genre reference ─────────────────────────────────────────────────
 const GENRE_MAP =
@@ -37,8 +45,23 @@ Return exactly this shape:
   "yearAfter":  number | null,
   "yearBefore": number | null,
   "minRating":  number | null,
-  "sortBy": "popularity.desc" | "vote_average.desc" | null
+  "sortBy": "popularity.desc" | "vote_average.desc" | null,
+  "language": string | null,
+  "keywords": string[],
+  "excludeKeywords": string[],
+  "similarTo": string[],
+  "examples": string[],
+  "people": string[]
 }
+
+Field guide:
+- keywords: 3-6 ENGLISH keywords as used on TMDB for the subgenre, theme, setting or style requested, the exact term first and then close neighbours. Lowercase, 1-3 words each. E.g. "terror analógico" → ["analog horror","found footage","vhs","mockumentary","lost tape"]; "viajes en el tiempo" → ["time travel","time loop"]; "cine negro" → ["film noir","neo-noir"]. Empty if the request is only about genre, length, era or rating.
+- excludeKeywords: same format, for themes the user rejects.
+- similarTo: film titles the user explicitly names as a reference ("algo como Hereditary" → ["Hereditary"]). Never invent these.
+- examples: 5-8 real feature films that best fit the whole request, as "Title (year)" with the original title. REQUIRED whenever keywords, similarTo or people is non-empty — these films are the most important part of the answer. Prefer well-regarded and varied picks. Empty only for generic requests (just a genre, length, era or rating).
+- includeGenreIds: always include the genre when the request names or implies one ("terror analógico" → [27]).
+- people: directors or actors the user names.
+- language: ISO 639-1 code of the ORIGINAL language when the user asks for a national cinema ("coreana" → "ko", "cine francés" → "fr", "anime/japonesa" → "ja", "española/en español" → "es"). Otherwise null.
 
 Rules (apply in any language):
 - negation ("no terror", "sin romance", "nada de", "without", "not") → excludeGenreIds
@@ -69,7 +92,27 @@ type AIPreferences = {
   yearBefore:      number | null;
   minRating:       number | null;
   sortBy:          "popularity.desc" | "vote_average.desc" | null;
+  language?:        string | null;
+  keywords?:        string[];
+  excludeKeywords?: string[];
+  similarTo?:       string[];
+  examples?:        string[];
+  people?:          string[];
 };
+
+const MODEL_TIMEOUT_MS = 7000;
+const TOTAL_BUDGET_MS = 12000;
+
+const strings = (value: unknown, max: number): string[] =>
+  Array.isArray(value)
+    ? value.filter((v): v is string => typeof v === "string" && v.trim().length > 1).map((v) => v.trim().slice(0, 80)).slice(0, max)
+    : [];
+
+const genreIdList = (value: unknown): number[] =>
+  Array.isArray(value) ? value.filter((v): v is number => Number.isInteger(v)).slice(0, 6) : [];
+
+/** OpenRouter's daily allowance of free requests is used up for this API key. */
+class QuotaExhaustedError extends Error {}
 
 // ─── Single model call ────────────────────────────────────────────────────
 async function tryModel(model: string, prompt: string): Promise<string> {
@@ -78,22 +121,26 @@ async function tryModel(model: string, prompt: string): Promise<string> {
     headers: {
       "Authorization": `Bearer ${process.env.OPENROUTER_API_KEY}`,
       "Content-Type":  "application/json",
-      "HTTP-Referer":  "https://cinemood.app",
-      "X-Title":       "CineMood",
+      "X-Title":       "MovieAsUFeel",
     },
     body: JSON.stringify({
       model,
       messages:    [{ role: "user", content: prompt }],
       temperature: 0,
-      max_tokens:  300,
+      max_tokens:  700,
+      // Extraction needs no deliberation; thinking only adds seconds
+      reasoning:   { effort: "none", exclude: true },
     }),
+    signal: AbortSignal.timeout(MODEL_TIMEOUT_MS),
   });
 
   const result = await response.json();
 
   // Surface provider errors so the caller can try the next model
   if (!response.ok || result.error) {
-    const msg = result?.error?.message ?? `HTTP ${response.status}`;
+    const msg: string = result?.error?.message ?? `HTTP ${response.status}`;
+    // The daily free quota is per account, not per model: every other model would fail too
+    if (/per-day|daily|credits/i.test(msg)) throw new QuotaExhaustedError(msg);
     throw new Error(msg);
   }
 
@@ -116,37 +163,80 @@ function extractJSON(raw: string): string {
   return raw.trim();
 }
 
-// ─── Main export — tries models in chain, throws only if all fail ─────────
-export async function analyzeTextWithAI(text: string): Promise<TextBoosts> {
+// ─── One model: prompt → validated intent ────────────────────────────────
+async function askModel(model: string, prompt: string): Promise<TextIntent> {
+  try {
+    const prefs = JSON.parse(extractJSON(await tryModel(model, prompt))) as AIPreferences;
+
+    const overrides: Partial<DiscoverParams> = {};
+    if (prefs.maxRuntime != null) overrides["with_runtime.lte"]         = prefs.maxRuntime;
+    if (prefs.minRuntime != null) overrides["with_runtime.gte"]         = prefs.minRuntime;
+    if (prefs.yearAfter  != null) overrides["primary_release_date.gte"] = `${prefs.yearAfter}-01-01`;
+    if (prefs.yearBefore != null) overrides["primary_release_date.lte"] = `${prefs.yearBefore}-12-31`;
+    if (prefs.minRating  != null) overrides["vote_average.gte"]         = prefs.minRating;
+    if (prefs.sortBy     != null) overrides["sort_by"]                  = prefs.sortBy;
+    if (typeof prefs.language === "string" && /^[a-z]{2}$/.test(prefs.language)) {
+      overrides["with_original_language"] = prefs.language;
+    }
+
+    return {
+      ...EMPTY_INTENT,
+      genreIds:        genreIdList(prefs.includeGenreIds),
+      excludeGenreIds: genreIdList(prefs.excludeGenreIds),
+      overrides,
+      keywords:        strings(prefs.keywords, 8),
+      excludeKeywords: strings(prefs.excludeKeywords, 8),
+      similarTo:       strings(prefs.similarTo, 4),
+      examples:        strings(prefs.examples, 8),
+      people:          strings(prefs.people, 3),
+    };
+  } catch (err) {
+    console.warn(`[aiTextAnalyzer] model ${model} failed:`, err instanceof Error ? err.message : err);
+    throw err;
+  }
+}
+
+// ─── Main export — throws only if every model fails ───────────────────────
+// Free models share a small daily request quota per account, so models are
+// asked one at a time and the first good answer wins. An answer that names
+// themes but no example films is "lazy"; one more model gets a chance to do
+// better before we settle for it.
+//
+// When the quota runs out, every model fails until it resets. Rather than
+// spend seconds on a doomed chain for each search, pause the model calls for
+// a while and let the rule-based analyzer answer.
+const QUOTA_PAUSE_MS = 30 * 60 * 1000;
+let pausedUntil = 0;
+
+const isLazy = (intent: TextIntent) =>
+  intent.examples.length === 0 &&
+  (intent.keywords.length > 0 || intent.similarTo.length > 0 || intent.people.length > 0);
+
+export async function analyzeTextWithAI(text: string): Promise<TextIntent> {
+  if (Date.now() < pausedUntil) throw new Error("OpenRouter free quota exhausted; model calls paused");
+
   const prompt = buildPrompt(text);
+  const startedAt = Date.now();
+  let fallback: TextIntent | null = null;
   let lastError: unknown;
 
-  for (const model of MODEL_CHAIN) {
+  for (const model of modelChain()) {
+    if (Date.now() - startedAt > TOTAL_BUDGET_MS) break;
     try {
-      const raw     = await tryModel(model, prompt);
-      const cleaned = extractJSON(raw);
-      const prefs   = JSON.parse(cleaned) as AIPreferences;
-
-      const overrides: Partial<DiscoverParams> = {};
-      if (prefs.maxRuntime != null) overrides["with_runtime.lte"]         = prefs.maxRuntime;
-      if (prefs.minRuntime != null) overrides["with_runtime.gte"]         = prefs.minRuntime;
-      if (prefs.yearAfter  != null) overrides["primary_release_date.gte"] = `${prefs.yearAfter}-01-01`;
-      if (prefs.yearBefore != null) overrides["primary_release_date.lte"] = `${prefs.yearBefore}-12-31`;
-      if (prefs.minRating  != null) overrides["vote_average.gte"]         = prefs.minRating;
-      if (prefs.sortBy     != null) overrides["sort_by"]                  = prefs.sortBy;
-
-      return {
-        genreIds:        prefs.includeGenreIds ?? [],
-        excludeGenreIds: prefs.excludeGenreIds ?? [],
-        overrides,
-      };
+      const intent = await askModel(model, prompt);
+      if (!isLazy(intent)) return intent;
+      if (fallback) return fallback; // second lazy answer: stop spending quota
+      fallback = intent;
     } catch (err) {
-      console.warn(`[aiTextAnalyzer] model ${model} failed:`, err);
       lastError = err;
-      // Continue to next model in chain
+      if (err instanceof QuotaExhaustedError) {
+        pausedUntil = Date.now() + QUOTA_PAUSE_MS;
+        break;
+      }
     }
   }
 
+  if (fallback) return fallback;
   // All models failed — bubble up so recommendationEngine falls back to keywords
   throw lastError ?? new Error("All OpenRouter models failed");
 }

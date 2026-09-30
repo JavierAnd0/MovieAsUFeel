@@ -1,10 +1,73 @@
 import type { DiscoverParams } from "@/types/tmdb";
 
-export type TextBoosts = {
+/** What the user asked for, still as words. Resolved to TMDB ids by textResolver. */
+export type TextIntent = {
   genreIds:        number[];   // genres to INCLUDE / boost
   excludeGenreIds: number[];   // genres to EXCLUDE from results
   overrides:       Partial<DiscoverParams>;
+  keywords:        string[];   // themes / subgenres, in English as TMDB names them
+  excludeKeywords: string[];
+  similarTo:       string[];   // films the user named ("algo como Hereditary")
+  examples:        string[];   // films that exemplify the request
+  people:          string[];   // directors or actors the user named
 };
+
+export const EMPTY_INTENT: TextIntent = {
+  genreIds: [], excludeGenreIds: [], overrides: {},
+  keywords: [], excludeKeywords: [], similarTo: [], examples: [], people: [],
+};
+
+// ─── Subgenres and themes ──────────────────────────────────────────────────
+// Used when no language model is available. TMDB keywords are in English, so
+// each Spanish phrase maps to the keyword names that cover it. The most common
+// subgenres also carry a few canonical films: keywords alone surface too many
+// loosely tagged titles, and these anchor the search the way the model would.
+const THEME_RULES: Array<{ patterns: string[]; keywords: string[]; examples?: string[] }> = [
+  {
+    patterns: ["terror analogico", "terror analógico", "analog horror"],
+    keywords: ["analog horror", "found footage", "vhs"],
+    examples: ["The Blair Witch Project (1999)", "Lake Mungo (2008)", "Noroi: The Curse (2005)", "Skinamarink (2022)", "V/H/S (2012)", "Hell House LLC (2015)", "Late Night with the Devil (2024)"],
+  },
+  {
+    patterns: ["metraje encontrado", "found footage", "camara en mano", "cámara en mano"],
+    keywords: ["found footage"],
+    examples: ["[REC] (2007)", "Paranormal Activity (2007)", "The Blair Witch Project (1999)", "Cloverfield (2008)", "Creep (2014)"],
+  },
+  { patterns: ["falso documental", "mockumentary"], keywords: ["mockumentary"], examples: ["This Is Spinal Tap (1984)", "What We Do in the Shadows (2014)", "Borat (2006)", "Man Bites Dog (1992)"] },
+  { patterns: ["slasher", "asesino en serie", "serial killer"], keywords: ["slasher", "serial killer"], examples: ["Halloween (1978)", "Scream (1996)", "The Texas Chain Saw Massacre (1974)", "X (2022)", "Se7en (1995)"] },
+  { patterns: ["zombi", "zombie", "muertos vivientes"], keywords: ["zombie"], examples: ["Dawn of the Dead (1978)", "28 Days Later (2002)", "Train to Busan (2016)", "Shaun of the Dead (2004)", "Night of the Living Dead (1968)"] },
+  { patterns: ["vampir"], keywords: ["vampire"], examples: ["Let the Right One In (2008)", "Nosferatu (1922)", "Interview with the Vampire (1994)", "What We Do in the Shadows (2014)"] },
+  { patterns: ["fantasma", "casa encantada", "paranormal"], keywords: ["ghost", "haunted house"], examples: ["The Others (2001)", "The Conjuring (2013)", "The Haunting (1963)", "The Orphanage (2007)", "Ju-on: The Grudge (2002)"] },
+  { patterns: ["terror folk", "folk horror", "secta", "culto"], keywords: ["folk horror", "cult"], examples: ["The Wicker Man (1973)", "Midsommar (2019)", "The Witch (2015)", "Kill List (2011)"] },
+  { patterns: ["terror corporal", "body horror"], keywords: ["body horror"], examples: ["The Fly (1986)", "Videodrome (1983)", "The Substance (2024)", "Tetsuo: The Iron Man (1989)", "Titane (2021)"] },
+  { patterns: ["viajes en el tiempo", "viaje en el tiempo", "time travel", "bucle temporal"], keywords: ["time travel", "time loop"], examples: ["Back to the Future (1985)", "Primer (2004)", "Groundhog Day (1993)", "Predestination (2014)", "12 Monkeys (1995)"] },
+  { patterns: ["cyberpunk", "ciberpunk"], keywords: ["cyberpunk"], examples: ["Blade Runner (1982)", "Ghost in the Shell (1995)", "Akira (1988)", "The Matrix (1999)"] },
+  { patterns: ["distop", "dystopia"], keywords: ["dystopia"] },
+  { patterns: ["postapocal", "post-apocal", "apocalip"], keywords: ["post-apocalyptic future"] },
+  { patterns: ["espacio", "espacial", "astronauta", "space"], keywords: ["space", "astronaut"] },
+  { patterns: ["inteligencia artificial", "robots", "androide"], keywords: ["artificial intelligence (a.i.)", "android"] },
+  { patterns: ["cine negro", "noir"], keywords: ["film noir", "neo-noir"] },
+  { patterns: ["atraco", "robo", "heist"], keywords: ["heist"] },
+  { patterns: ["juicio", "abogados", "tribunal"], keywords: ["courtroom"] },
+  { patterns: ["samur"], keywords: ["samurai"] },
+  { patterns: ["artes marciales", "kung fu", "kung-fu"], keywords: ["martial arts", "kung fu"] },
+  { patterns: ["mafia", "gangster", "gánster"], keywords: ["mafia", "gangster"] },
+  { patterns: ["espías", "espias", "espionaje"], keywords: ["spy", "espionage"] },
+  { patterns: ["venganza"], keywords: ["revenge"] },
+  { patterns: ["road movie", "viaje por carretera"], keywords: ["road trip"] },
+  { patterns: ["adolescen", "instituto", "coming of age"], keywords: ["coming of age", "high school"] },
+  { patterns: ["navidad", "navideñ"], keywords: ["christmas"] },
+  { patterns: ["deporte", "boxeo", "fútbol", "futbol"], keywords: ["sports"] },
+  { patterns: ["basada en hechos reales", "hechos reales", "historia real", "biopic", "biográfica"], keywords: ["based on true story", "biography"] },
+  { patterns: ["anime"], keywords: ["anime"] },
+  { patterns: ["stop motion", "stop-motion"], keywords: ["stop motion"] },
+  { patterns: ["lgbt", "queer", "gay", "lesbian"], keywords: ["lgbt"] },
+  { patterns: ["surreal", "onírica", "onirica", "rara", "extraña"], keywords: ["surrealism"] },
+  { patterns: ["giro final", "plot twist", "final inesperado"], keywords: ["plot twist"] },
+  { patterns: ["supervivencia", "survival"], keywords: ["survival"] },
+  { patterns: ["monstruo", "kaiju"], keywords: ["monster", "kaiju"] },
+  { patterns: ["extraterrestre", "alien", "ovni"], keywords: ["alien", "alien invasion"] },
+];
 
 // ─── Negation detection ────────────────────────────────────────────────────
 // Returns true if the keyword appears directly after a negation word
@@ -185,7 +248,7 @@ const OVERRIDE_RULES: OverrideRule[] = [
 ];
 
 // ─── Main export ───────────────────────────────────────────────────────────
-export function analyzeText(text: string): TextBoosts {
+export function analyzeText(text: string): TextIntent {
   const lower = text.toLowerCase();
 
   const genreIds:        number[] = [];
@@ -209,9 +272,28 @@ export function analyzeText(text: string): TextBoosts {
     }
   }
 
+  const keywords:        string[] = [];
+  const excludeKeywords: string[] = [];
+  const examples:        string[] = [];
+  for (const rule of THEME_RULES) {
+    if (matchesNegative(lower, rule.patterns)) excludeKeywords.push(...rule.keywords);
+    else if (matchesPositive(lower, rule.patterns)) {
+      keywords.push(...rule.keywords);
+      examples.push(...(rule.examples ?? []));
+    }
+  }
+
+  // "algo como Hereditary", "parecida a Alien", "estilo Blade Runner"
+  const reference = text.match(/(?:\bcomo|parecid[ao]s? a|similar(?:es)? a|\bestilo|\btipo)\s+(?:la |el |las |los )?([^,.;]{2,60})/i);
+
   return {
+    ...EMPTY_INTENT,
+    similarTo:       reference ? [reference[1].trim()] : [],
     genreIds:        [...new Set(genreIds)],
     excludeGenreIds: [...new Set(excludeGenreIds)],
     overrides,
+    keywords:        [...new Set(keywords)],
+    excludeKeywords: [...new Set(excludeKeywords)],
+    examples:        [...new Set(examples)],
   };
 }
