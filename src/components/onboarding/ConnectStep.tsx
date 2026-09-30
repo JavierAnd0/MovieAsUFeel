@@ -89,7 +89,7 @@ export default function ConnectStep({ username, onUsernameChange, profile, loadi
                 </div>
                 {profile.topGenres.length > 0 && (
                   <div className="mt-3 flex flex-wrap gap-1.5">
-                    {profile.topGenres.slice(0, 5).map(g => (
+                    {profile.topGenres.filter(g => g.score > 0).slice(0, 5).map(g => (
                       <span key={g.id} className="chip">{g.name}</span>
                     ))}
                   </div>

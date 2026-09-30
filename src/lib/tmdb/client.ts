@@ -2,6 +2,7 @@ import type {
   TMDBSearchResponse,
   TMDBDiscoverResponse,
   TMDBGenre,
+  TMDBMovieDetail,
   DiscoverParams,
 } from "@/types/tmdb";
 
@@ -34,6 +35,7 @@ export async function searchMovie(
   year?: number
 ): Promise<TMDBSearchResponse> {
   return tmdbFetch<TMDBSearchResponse>("/search/movie", {
+    language: "es-ES",
     query: title,
     ...(year ? { year } : {}),
   });
@@ -48,6 +50,19 @@ export async function discoverMovies(
   }
   // Spanish titles and synopses; TMDB falls back to the original when missing
   return tmdbFetch<TMDBDiscoverResponse>("/discover/movie", { language: "es-ES", ...flat });
+}
+
+/** Core facts about one film. `withKeywords` also loads its TMDB keywords. */
+export async function getMovieDetail(id: number, withKeywords = false): Promise<TMDBMovieDetail> {
+  return tmdbFetch<TMDBMovieDetail>(`/movie/${id}`, {
+    language: "es-ES",
+    ...(withKeywords ? { append_to_response: "keywords" } : {}),
+  });
+}
+
+/** "People who liked this also liked…" — TMDB's own collaborative filtering. */
+export async function getMovieRecommendations(id: number, page = 1): Promise<TMDBDiscoverResponse> {
+  return tmdbFetch<TMDBDiscoverResponse>(`/movie/${id}/recommendations`, { language: "es-ES", page });
 }
 
 export async function getGenreList(): Promise<TMDBGenre[]> {
