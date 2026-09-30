@@ -46,12 +46,13 @@ export async function discoverMovies(
   for (const [k, v] of Object.entries(params)) {
     if (v !== undefined) flat[k] = v;
   }
-  return tmdbFetch<TMDBDiscoverResponse>("/discover/movie", flat);
+  // Spanish titles and synopses; TMDB falls back to the original when missing
+  return tmdbFetch<TMDBDiscoverResponse>("/discover/movie", { language: "es-ES", ...flat });
 }
 
 export async function getGenreList(): Promise<TMDBGenre[]> {
   const data = await tmdbFetch<{ genres: TMDBGenre[] }>("/genre/movie/list", {
-    language: "en",
+    language: "es-ES",
   });
   return data.genres;
 }

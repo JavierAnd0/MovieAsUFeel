@@ -12,69 +12,75 @@ export const MOOD_MAP: Record<MoodCategory, MoodSignal> = {
     keywords: ["feel-good", "uplifting", "heartwarming"],
     sortBy: "popularity.desc",
     voteThreshold: 6.5,
-    toneLabel: "feel-good",
+    toneLabel: "alegre",
   },
   sad: {
     genres: [18, 10749],
     keywords: ["emotional", "moving", "tearjerker"],
     sortBy: "vote_average.desc",
     voteThreshold: 7.0,
-    toneLabel: "moving",
+    toneLabel: "emotivo",
   },
   anxious: {
     genres: [53, 27],
     keywords: ["suspense", "tension", "psychological"],
     sortBy: "vote_average.desc",
     voteThreshold: 6.5,
-    toneLabel: "tense",
+    toneLabel: "tenso",
   },
   relaxed: {
     genres: [35, 99, 10749],
     keywords: ["light-hearted", "cozy", "slice-of-life"],
     sortBy: "popularity.desc",
     voteThreshold: 6.0,
-    toneLabel: "easy-watch",
+    toneLabel: "tranquilo",
   },
   frustrated: {
     genres: [28, 80],
     keywords: ["cathartic", "revenge", "adrenaline"],
     sortBy: "popularity.desc",
     voteThreshold: 6.5,
-    toneLabel: "cathartic",
+    toneLabel: "catártico",
   },
   thoughtful: {
     genres: [18, 9648, 878],
     keywords: ["thought-provoking", "philosophical", "cerebral"],
     sortBy: "vote_average.desc",
     voteThreshold: 7.0,
-    toneLabel: "cerebral",
+    toneLabel: "reflexivo",
   },
   excited: {
     genres: [28, 12, 14],
     keywords: ["epic", "high-energy", "spectacular"],
     sortBy: "popularity.desc",
     voteThreshold: 6.5,
-    toneLabel: "high-energy",
+    toneLabel: "enérgico",
   },
   tired: {
     genres: [35, 16, 10751],
     keywords: ["comforting", "light", "easy"],
     sortBy: "vote_average.desc",
     voteThreshold: 6.5,
-    toneLabel: "comforting",
+    toneLabel: "reconfortante",
   },
 };
 
 export const MOOD_META: Record<
   MoodCategory,
-  { emoji: string; label: string; description: string }
+  { emoji: string; label: string; description: string; /** "una noche de …" */ night: string }
 > = {
-  happy: { emoji: "😄", label: "Feliz", description: "Alegre y con ganas de reír" },
-  sad: { emoji: "😢", label: "Melancólico", description: "Necesito sentir algo profundo" },
-  anxious: { emoji: "😰", label: "Ansioso", description: "Con energía nerviosa que canalizar" },
-  relaxed: { emoji: "😌", label: "Relajado", description: "Tranquilo, sin esfuerzo mental" },
-  frustrated: { emoji: "😤", label: "Frustrado", description: "Necesito algo catártico" },
-  thoughtful: { emoji: "🤔", label: "Reflexivo", description: "Con ganas de pensar y analizar" },
-  excited: { emoji: "🤩", label: "Emocionado", description: "Con mucha energía y entusiasmo" },
-  tired: { emoji: "😴", label: "Cansado", description: "Solo quiero algo fácil de ver" },
+  happy: { emoji: "😄", label: "Feliz", description: "Alegre y con ganas de reír", night: "risas" },
+  sad: { emoji: "😢", label: "Melancólico", description: "Necesito sentir algo profundo", night: "melancolía" },
+  anxious: { emoji: "😰", label: "Ansioso", description: "Con energía nerviosa que canalizar", night: "nervios" },
+  relaxed: { emoji: "😌", label: "Relajado", description: "Tranquilo, sin esfuerzo mental", night: "calma" },
+  frustrated: { emoji: "😤", label: "Frustrado", description: "Necesito algo catártico", night: "desahogo" },
+  thoughtful: { emoji: "🤔", label: "Reflexivo", description: "Con ganas de pensar y analizar", night: "reflexión" },
+  excited: { emoji: "🤩", label: "Emocionado", description: "Con mucha energía y entusiasmo", night: "emoción" },
+  tired: { emoji: "😴", label: "Cansado", description: "Solo quiero algo fácil de ver", night: "sofá" },
 };
+
+/** ["a"] → "a", ["a","b"] → "a y b", ["a","b","c"] → "a, b y c" */
+export function joinSpanish(items: string[]): string {
+  if (items.length <= 1) return items[0] ?? "";
+  return `${items.slice(0, -1).join(", ")} y ${items[items.length - 1]}`;
+}

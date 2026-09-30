@@ -8,7 +8,7 @@ type TMDBCredits     = { crew: TMDBCrewMember[]; cast: TMDBCastMember[] };
 type TMDBGenre       = { id: number; name: string };
 type TMDBReleaseDate = { certification: string; type: number };
 type TMDBReleaseDatesResult = { iso_3166_1: string; release_dates: TMDBReleaseDate[] };
-type TMDBVideo       = { key: string; site: string; type: string; official: boolean };
+type TMDBVideo       = { key: string; site: string; type: string; official: boolean; iso_639_1?: string };
 
 type TMDBMovieDetail = {
   id: number;
@@ -31,7 +31,7 @@ function formatRuntime(minutes: number): string {
   if (!minutes) return "";
   const h = Math.floor(minutes / 60);
   const m = minutes % 60;
-  return h > 0 ? `${h}H ${m > 0 ? `${m}M` : ""}`.trim() : `${m}M`;
+  return h > 0 ? `${h} h${m > 0 ? ` ${m} min` : ""}` : `${m} min`;
 }
 
 function formatVoteCount(count: number): string {
@@ -47,16 +47,18 @@ export async function GET(
   const key = process.env.TMDB_API_KEY;
 
   if (!/^\d{1,10}$/.test(id)) {
-    return NextResponse.json({ error: "Invalid movie id" }, { status: 400 });
+    return NextResponse.json({ error: "Película no válida." }, { status: 400 });
   }
 
-  if (!key) return NextResponse.json({ error: "Service not configured" }, { status: 500 });
+  if (!key) return NextResponse.json({ error: "Servicio no configurado." }, { status: 500 });
 
   try {
     const url = new URL(`${BASE}/movie/${id}`);
     url.searchParams.set("api_key", key);
     url.searchParams.set("language", "es");
     url.searchParams.set("append_to_response", "credits,release_dates,videos");
+    // Spanish trailer when there is one, otherwise the original
+    url.searchParams.set("include_video_language", "es,en,null");
 
     const res = await fetch(url.toString(), {
       cache: "no-store",
@@ -64,7 +66,7 @@ export async function GET(
     });
 
     if (!res.ok) {
-      return NextResponse.json({ error: "Not found" }, { status: res.status });
+      return NextResponse.json({ error: "Película no encontrada." }, { status: res.status });
     }
 
     const d = (await res.json()) as TMDBMovieDetail;
@@ -89,6 +91,7 @@ export async function GET(
 
     // YouTube trailer key
     const trailer =
+      d.videos?.results?.find(v => v.site === "YouTube" && v.type === "Trailer" && v.official && v.iso_639_1 === "es") ??
       d.videos?.results?.find(v => v.site === "YouTube" && v.type === "Trailer" && v.official) ??
       d.videos?.results?.find(v => v.site === "YouTube" && v.type === "Trailer");
     const trailerKey = trailer?.key ?? null;
@@ -113,6 +116,6 @@ export async function GET(
     });
   } catch (err) {
     console.error(`[/api/movie/${id}]`, err);
-    return NextResponse.json({ error: "Fetch failed" }, { status: 500 });
+    return NextResponse.json({ error: "No se pudo cargar la película." }, { status: 500 });
   }
 }
