@@ -15,6 +15,7 @@ export async function fetchLetterboxdRSS(username: string): Promise<WatchedFilm[
   const res = await fetch(url, {
     headers: { "User-Agent": "MovieAsUFeel/1.0" },
     next: { revalidate: 0 },
+    signal: AbortSignal.timeout(8000),
   });
 
   if (res.status === 404) {

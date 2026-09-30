@@ -19,7 +19,10 @@ async function tmdbFetch<T>(path: string, params: Record<string, string | number
   for (const [k, v] of Object.entries(params)) {
     url.searchParams.set(k, String(v));
   }
-  const res = await fetch(url.toString(), { next: { revalidate: 0 } });
+  const res = await fetch(url.toString(), {
+    next: { revalidate: 0 },
+    signal: AbortSignal.timeout(8000),
+  });
   if (!res.ok) {
     throw new Error(`TMDB ${path} → ${res.status} ${res.statusText}`);
   }

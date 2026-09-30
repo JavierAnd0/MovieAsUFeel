@@ -46,7 +46,11 @@ export async function GET(
   const { id } = await params;
   const key = process.env.TMDB_API_KEY;
 
-  if (!key) return NextResponse.json({ error: "No API key" }, { status: 500 });
+  if (!/^\d{1,10}$/.test(id)) {
+    return NextResponse.json({ error: "Invalid movie id" }, { status: 400 });
+  }
+
+  if (!key) return NextResponse.json({ error: "Service not configured" }, { status: 500 });
 
   try {
     const url = new URL(`${BASE}/movie/${id}`);

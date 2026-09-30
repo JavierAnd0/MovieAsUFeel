@@ -1,12 +1,16 @@
 import { NextResponse } from "next/server";
 
 const BASE = "https://api.themoviedb.org/3";
+const MAX_QUERY_LENGTH = 80;
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const q = searchParams.get("q")?.trim();
 
   if (!q || q.length < 2) return NextResponse.json({ results: [] });
+  if (q.length > MAX_QUERY_LENGTH) {
+    return NextResponse.json({ error: "Query is too long" }, { status: 400 });
+  }
 
   const key = process.env.TMDB_API_KEY;
   if (!key) return NextResponse.json({ results: [] });

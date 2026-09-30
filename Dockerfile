@@ -15,13 +15,6 @@ WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 
-# Build args are injected at build time for env vars needed during `next build`
-# (TMDB_API_KEY is only used at runtime via API routes, so it's fine as ARG)
-ARG TMDB_API_KEY
-ARG OPENROUTER_API_KEY
-ENV TMDB_API_KEY=$TMDB_API_KEY
-ENV OPENROUTER_API_KEY=$OPENROUTER_API_KEY
-
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV NODE_ENV=production
 
