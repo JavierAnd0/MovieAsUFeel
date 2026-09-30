@@ -9,6 +9,7 @@ const MAX_WATCHED_IDS = 500;
 const MAX_PROFILE_GENRES = 20;
 const MAX_BODY_BYTES = 200_000;
 const MAX_ROUND = 5;
+const MAX_SEEDS = 12;
 const MAX_EXCLUDED_IDS = 200;
 const VALID_MOODS = new Set(Object.keys(MOOD_MAP));
 
@@ -51,12 +52,43 @@ function sanitizeTasteProfile(value: unknown): TasteProfile | null {
 
   if (!username || topGenres.length === 0) return null;
 
+  const genreAffinity: Record<string, number> = {};
+  if (isRecord(value.genreAffinity)) {
+    for (const [id, affinity] of Object.entries(value.genreAffinity).slice(0, 40)) {
+      if (/^\d{1,6}$/.test(id) && typeof affinity === "number" && Number.isFinite(affinity)) {
+        genreAffinity[id] = Math.max(-1, Math.min(1, affinity));
+      }
+    }
+  }
+
+  const seeds = Array.isArray(value.seeds)
+    ? value.seeds
+        .filter(isRecord)
+        .map((seed) => ({
+          tmdbId: typeof seed.tmdbId === "number" && Number.isInteger(seed.tmdbId) ? seed.tmdbId : 0,
+          title: typeof seed.title === "string" ? seed.title.slice(0, 200) : "",
+          rating: typeof seed.rating === "number" && Number.isFinite(seed.rating)
+            ? Math.max(0.5, Math.min(seed.rating, 5))
+            : 4,
+          genreIds: toNumberArray(seed.genreIds, 10),
+        }))
+        .filter((seed) => seed.tmdbId > 0 && seed.title)
+        .slice(0, MAX_SEEDS)
+    : [];
+
+  const languages = Array.isArray(value.languages)
+    ? value.languages.filter((l): l is string => typeof l === "string" && /^[a-z]{2,3}$/.test(l)).slice(0, 10)
+    : [];
+
   return {
     username,
     filmCount,
     avgRating,
     ratingBias,
     topGenres,
+    genreAffinity,
+    seeds,
+    languages,
     topDirectors: Array.isArray(value.topDirectors)
       ? value.topDirectors.filter((name): name is string => typeof name === "string").slice(0, 20)
       : [],

@@ -8,6 +8,8 @@ type RSSItem = {
   "letterboxd:memberRating"?: number;
   "letterboxd:filmYear"?: number;
   "letterboxd:filmTitle"?: string;
+  "letterboxd:memberLike"?: string;
+  "tmdb:movieId"?: number;
 };
 
 export class LetterboxdNotFoundError extends Error {}
@@ -61,7 +63,10 @@ export function parseRSS(xml: string): WatchedFilm[] {
       year: Number(year),
       letterboxdUrl,
       rating: rating ? Number(rating) : undefined,
+      liked: item["letterboxd:memberLike"] === "Yes",
       watchedDate,
+      // Letterboxd publishes the TMDB id, so no fuzzy title matching is needed
+      tmdbId: Number(item["tmdb:movieId"]) > 0 ? Number(item["tmdb:movieId"]) : undefined,
     });
   }
 
