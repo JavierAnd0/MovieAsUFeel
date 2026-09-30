@@ -111,6 +111,9 @@ const strings = (value: unknown, max: number): string[] =>
 const genreIdList = (value: unknown): number[] =>
   Array.isArray(value) ? value.filter((v): v is number => Number.isInteger(v)).slice(0, 6) : [];
 
+/** OpenRouter's daily allowance of free requests is used up for this API key. */
+class QuotaExhaustedError extends Error {}
+
 // ─── Single model call ────────────────────────────────────────────────────
 async function tryModel(model: string, prompt: string): Promise<string> {
   const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
@@ -135,7 +138,9 @@ async function tryModel(model: string, prompt: string): Promise<string> {
 
   // Surface provider errors so the caller can try the next model
   if (!response.ok || result.error) {
-    const msg = result?.error?.message ?? `HTTP ${response.status}`;
+    const msg: string = result?.error?.message ?? `HTTP ${response.status}`;
+    // The daily free quota is per account, not per model: every other model would fail too
+    if (/per-day|daily|credits/i.test(msg)) throw new QuotaExhaustedError(msg);
     throw new Error(msg);
   }
 
@@ -192,65 +197,46 @@ async function askModel(model: string, prompt: string): Promise<TextIntent> {
 }
 
 // ─── Main export — throws only if every model fails ───────────────────────
-// Free endpoints are often rate-limited, slow, or lazy (a quick answer with
-// half the fields empty). So the first few models are asked at once; after the
-// first valid answer the others get a short grace period, and the most
-// complete answer wins. The rest of the chain is a backstop.
-const RACE_SIZE = 3;
-const GRACE_MS = 2500;
+// Free models share a small daily request quota per account, so models are
+// asked one at a time and the first good answer wins. An answer that names
+// themes but no example films is "lazy"; one more model gets a chance to do
+// better before we settle for it.
+//
+// When the quota runs out, every model fails until it resets. Rather than
+// spend seconds on a doomed chain for each search, pause the model calls for
+// a while and let the rule-based analyzer answer.
+const QUOTA_PAUSE_MS = 30 * 60 * 1000;
+let pausedUntil = 0;
 
-/** More concrete material to search with = a more useful answer. */
-const richness = (intent: TextIntent) =>
-  intent.examples.length * 2 + intent.keywords.length + intent.similarTo.length * 2 +
-  intent.people.length * 2 + intent.genreIds.length + Object.keys(intent.overrides).length;
-
-function raceForBest(models: string[], prompt: string): Promise<TextIntent> {
-  return new Promise((resolve, reject) => {
-    const answers: TextIntent[] = [];
-    let pending = models.length;
-    let settled = false;
-    let lastError: unknown;
-
-    const finish = () => {
-      if (settled) return;
-      settled = true;
-      if (answers.length === 0) reject(lastError ?? new Error("No model answered"));
-      else resolve(answers.reduce((best, a) => (richness(a) > richness(best) ? a : best)));
-    };
-
-    for (const model of models) {
-      askModel(model, prompt)
-        .then((intent) => {
-          answers.push(intent);
-          if (answers.length === 1) setTimeout(finish, GRACE_MS);
-        })
-        .catch((err) => { lastError = err; })
-        .finally(() => { if (--pending === 0) finish(); });
-    }
-  });
-}
+const isLazy = (intent: TextIntent) =>
+  intent.examples.length === 0 &&
+  (intent.keywords.length > 0 || intent.similarTo.length > 0 || intent.people.length > 0);
 
 export async function analyzeTextWithAI(text: string): Promise<TextIntent> {
+  if (Date.now() < pausedUntil) throw new Error("OpenRouter free quota exhausted; model calls paused");
+
   const prompt = buildPrompt(text);
-  const chain = modelChain();
   const startedAt = Date.now();
-
+  let fallback: TextIntent | null = null;
   let lastError: unknown;
-  try {
-    return await raceForBest(chain.slice(0, RACE_SIZE), prompt);
-  } catch (err) {
-    lastError = err; // every racer failed — fall through to the remaining models
-  }
 
-  for (const model of chain.slice(RACE_SIZE)) {
+  for (const model of modelChain()) {
     if (Date.now() - startedAt > TOTAL_BUDGET_MS) break;
     try {
-      return await askModel(model, prompt);
+      const intent = await askModel(model, prompt);
+      if (!isLazy(intent)) return intent;
+      if (fallback) return fallback; // second lazy answer: stop spending quota
+      fallback = intent;
     } catch (err) {
       lastError = err;
+      if (err instanceof QuotaExhaustedError) {
+        pausedUntil = Date.now() + QUOTA_PAUSE_MS;
+        break;
+      }
     }
   }
 
+  if (fallback) return fallback;
   // All models failed — bubble up so recommendationEngine falls back to keywords
   throw lastError ?? new Error("All OpenRouter models failed");
 }

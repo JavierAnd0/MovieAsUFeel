@@ -168,6 +168,18 @@ function textScore(c: Candidate, text: TextBoosts): number {
   return Math.min(0.3, genreMatches * 0.2);
 }
 
+/**
+ * With a specific request ("terror analógico"), a film either answers it or
+ * doesn't belong on the list — however well it fits the mood or the user's
+ * taste. Showing fewer films beats padding with unrelated ones.
+ */
+const RELEVANCE_THRESHOLD = 0.6;
+
+function answersRequest(c: Candidate, text: TextBoosts): boolean {
+  if (!text.specific) return true;
+  return textScore(c, text) >= RELEVANCE_THRESHOLD;
+}
+
 // ─── Retrieval ──────────────────────────────────────────────────────────────
 
 // What a given sentence means doesn't change between requests; remembering it
@@ -192,6 +204,7 @@ async function analyzeFreeText(freeText?: string): Promise<TextBoosts> {
         ...ai,
         genreIds: [...new Set([...ai.genreIds, ...rules.genreIds])].filter((id) => !ai.excludeGenreIds.includes(id)),
         keywords: [...new Set([...ai.keywords, ...rules.keywords])],
+        examples: ai.examples.length > 0 ? ai.examples : rules.examples,
         excludeKeywords: [...new Set([...ai.excludeKeywords, ...rules.excludeKeywords])],
       });
       if (textCache.size >= TEXT_CACHE_MAX) textCache.delete(textCache.keys().next().value!);
@@ -487,9 +500,15 @@ export async function generateRecommendations(
   candidates.forEach(rescore);
   candidates.sort((a, b) => b.score - a.score);
 
+  // Films that already look like an answer go first; the rest fill the
+  // remaining slots, since details may still reveal a matching keyword.
+  const byRelevance = (list: Candidate[]) => [
+    ...list.filter((c) => answersRequest(c, text)),
+    ...list.filter((c) => !answersRequest(c, text)),
+  ];
   const finalists = [
-    ...candidates.filter((c) => !watched.has(c.movie.id)).slice(0, FINALISTS_UNSEEN),
-    ...candidates.filter((c) => watched.has(c.movie.id)).slice(0, FINALISTS_SEEN),
+    ...byRelevance(candidates.filter((c) => !watched.has(c.movie.id))).slice(0, FINALISTS_UNSEEN),
+    ...byRelevance(candidates.filter((c) => watched.has(c.movie.id))).slice(0, FINALISTS_SEEN),
   ];
 
   // Pass 2: keywords and runtime for the finalists
@@ -508,7 +527,7 @@ export async function generateRecommendations(
     }),
   );
 
-  const ranked = finalists.filter((c) => !c.rejected && passesRuntime(c.runtime, text));
+  const ranked = finalists.filter((c) => !c.rejected && passesRuntime(c.runtime, text) && answersRequest(c, text));
   ranked.forEach(rescore);
   ranked.sort((a, b) => b.score - a.score);
 
