@@ -20,7 +20,7 @@ function mergeMoodSignals(signals: MoodSignal[]): MoodSignal {
     ? "vote_average.desc"
     : "popularity.desc";
 
-  const toneLabel = signals.map((s) => s.toneLabel).join(" / ");
+  const toneLabel = signals.map((s) => s.toneLabel).join(" y ");
 
   return {
     genres: allGenres,
@@ -130,16 +130,16 @@ function buildBlurb(
 ): string {
   const year = movie.release_date ? parseInt(movie.release_date.slice(0, 4)) : null;
   const matchedGenreIds = movie.genre_ids.filter((id) => tasteGenreIds.includes(id));
-  const primaryGenreName = genreNames.get(movie.genre_ids[0]) ?? "película";
+  const primaryGenreName = genreNames.get(movie.genre_ids[0]) ?? "Película";
 
   const genrePart =
     matchedGenreIds.length > 0
-      ? `encaja con tu gusto por ${genreNames.get(matchedGenreIds[0]) ?? "este género"}`
-      : `perfecta para un momento ${moodSignal.toneLabel}`;
+      ? `encaja con tu gusto por el género ${(genreNames.get(matchedGenreIds[0]) ?? "").toLowerCase()}`
+      : `va bien para un momento ${moodSignal.toneLabel}`;
 
-  const ratingPart = movie.vote_average >= 7.5 ? ", muy bien valorada" : "";
+  const ratingPart = movie.vote_average >= 7.5 ? " y está muy bien valorada" : "";
 
-  return `Una ${primaryGenreName}${year ? ` de ${year}` : ""} que ${genrePart}${ratingPart}.`;
+  return `${primaryGenreName}${year ? ` de ${year}` : ""} que ${genrePart}${ratingPart}.`;
 }
 
 function toRecommendedMovie(
@@ -169,9 +169,17 @@ function toRecommendedMovie(
   };
 }
 
+export type GenerateOptions = {
+  /** 0 for the first batch; each extra round reads further discover pages. */
+  round?: number;
+  /** Movies already shown to the user, never returned again. */
+  excludeIds?: number[];
+};
+
 export async function generateRecommendations(
   tasteProfile: TasteProfile,
-  moodInput: MoodInput
+  moodInput: MoodInput,
+  { round = 0, excludeIds = [] }: GenerateOptions = {}
 ): Promise<RecommendationsResponse> {
   const genreList = await getGenreList();
   const genreNameMap = new Map<number, string>(genreList.map((g) => [g.id, g.name]));
@@ -218,7 +226,9 @@ export async function generateRecommendations(
       : {}),
   };
 
-  const candidates = await fetchDiscoverCandidates(discoverParams);
+  const excludedSet = new Set(excludeIds);
+  const candidates = (await fetchDiscoverCandidates(discoverParams, round))
+    .filter((movie) => !excludedSet.has(movie.id));
 
   const watchedSet = new Set(tasteProfile.watchedTmdbIds);
 

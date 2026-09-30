@@ -10,6 +10,8 @@ type RSSItem = {
   "letterboxd:filmTitle"?: string;
 };
 
+export class LetterboxdNotFoundError extends Error {}
+
 export async function fetchLetterboxdRSS(username: string): Promise<WatchedFilm[]> {
   const url = `https://letterboxd.com/${encodeURIComponent(username)}/rss/`;
   const res = await fetch(url, {
@@ -19,7 +21,7 @@ export async function fetchLetterboxdRSS(username: string): Promise<WatchedFilm[
   });
 
   if (res.status === 404) {
-    throw new Error(`Letterboxd user "${username}" not found. Check the username and make sure the profile is public.`);
+    throw new LetterboxdNotFoundError(`Letterboxd user "${username}" not found. Check the username and make sure the profile is public.`);
   }
   if (!res.ok) {
     throw new Error(`Could not fetch Letterboxd profile (${res.status}). Make sure your profile is public.`);

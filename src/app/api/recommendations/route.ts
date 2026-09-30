@@ -8,6 +8,8 @@ const MAX_FREE_TEXT_LENGTH = 500;
 const MAX_WATCHED_IDS = 500;
 const MAX_PROFILE_GENRES = 20;
 const MAX_BODY_BYTES = 200_000;
+const MAX_ROUND = 5;
+const MAX_EXCLUDED_IDS = 200;
 const VALID_MOODS = new Set(Object.keys(MOOD_MAP));
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -90,18 +92,18 @@ export async function POST(req: NextRequest) {
   const contentLength = Number(req.headers.get("content-length") ?? 0);
 
   if (contentLength > MAX_BODY_BYTES) {
-    return NextResponse.json({ error: "Request body is too large" }, { status: 413 });
+    return NextResponse.json({ error: "La petición es demasiado grande." }, { status: 413 });
   }
 
   try {
     body = await req.json();
   } catch {
-    return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+    return NextResponse.json({ error: "La petición no es válida." }, { status: 400 });
   }
 
   if (!isRecord(body) || !body.tasteProfile || !body.moodInput) {
     return NextResponse.json(
-      { error: "Missing tasteProfile or moodInput" },
+      { error: "Falta el perfil o el estado de ánimo." },
       { status: 400 }
     );
   }
@@ -111,19 +113,23 @@ export async function POST(req: NextRequest) {
 
   if (!tasteProfile || !moodInput) {
     return NextResponse.json(
-      { error: "Invalid tasteProfile or moodInput" },
+      { error: "El perfil o el estado de ánimo no son válidos. Vuelve a conectar tu Letterboxd." },
       { status: 400 }
     );
   }
 
   try {
-    const result = await generateRecommendations(tasteProfile, moodInput);
+    const round = typeof body.round === "number" && Number.isInteger(body.round)
+      ? Math.max(0, Math.min(body.round, MAX_ROUND))
+      : 0;
+    const excludeIds = toNumberArray(body.excludeIds, MAX_EXCLUDED_IDS);
+    const result = await generateRecommendations(tasteProfile, moodInput, { round, excludeIds });
     return NextResponse.json(result);
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unknown error";
     console.error("[/api/recommendations] Failed to generate recommendations:", message);
     return NextResponse.json(
-      { error: "Could not generate recommendations right now." },
+      { error: "No se pudieron generar recomendaciones ahora mismo. Inténtalo de nuevo en unos segundos." },
       { status: 500 }
     );
   }
