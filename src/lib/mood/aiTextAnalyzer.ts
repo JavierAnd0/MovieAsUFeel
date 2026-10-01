@@ -11,7 +11,7 @@ import { EMPTY_INTENT, type TextIntent } from "./textAnalyzer";
 type Provider = "gemini" | "openrouter";
 type ModelRef = { provider: Provider; model: string };
 
-const DEFAULT_GEMINI_MODELS = ["gemini-3.5-flash-lite", "gemini-2.5-flash-lite"];
+const DEFAULT_GEMINI_MODELS = ["gemini-3.5-flash-lite", "gemini-3.5-flash"];
 
 const DEFAULT_OPENROUTER_MODELS = [
   "qwen/qwen3.8-27b:free",
