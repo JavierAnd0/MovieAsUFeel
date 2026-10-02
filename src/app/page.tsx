@@ -7,6 +7,7 @@ import HeroStep from "@/components/onboarding/HeroStep";
 import ConnectStep from "@/components/onboarding/ConnectStep";
 import MoodStep from "@/components/onboarding/MoodStep";
 import { DRAFT_STORAGE_KEY, fetchProfile, readSession, resultsHref, writeSession } from "@/lib/client/session";
+import { syncLetterboxdWatchlist } from "@/lib/client/watchlist";
 import type { TasteProfile } from "@/types/letterboxd";
 import type { MoodCategory } from "@/types/mood";
 
@@ -72,6 +73,8 @@ export default function HomePage() {
       const loaded = await fetchProfile(trimmed);
       setProfile(loaded);
       setUsername(loaded.username);
+      // In the background: the watchlist is ready by the time moods are picked
+      void syncLetterboxdWatchlist(loaded.username, { force: true });
     } catch (err) {
       setConnectError(err instanceof Error ? err.message : "No se pudo cargar el perfil.");
     } finally {

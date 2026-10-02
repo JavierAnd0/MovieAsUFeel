@@ -17,6 +17,8 @@ export type SeedFilm = {
   title: string;
   rating: number;
   genreIds: number[];
+  /** Not rated by the user: a film on their list, used as a weaker "more like this". */
+  fromWatchlist?: boolean;
 };
 
 export type TasteProfile = {

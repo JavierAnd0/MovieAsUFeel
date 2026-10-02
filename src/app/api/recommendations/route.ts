@@ -11,6 +11,7 @@ const MAX_BODY_BYTES = 200_000;
 const MAX_ROUND = 5;
 const MAX_SEEDS = 12;
 const MAX_EXCLUDED_IDS = 200;
+const MAX_WATCHLIST_IDS = 150;
 const VALID_MOODS = new Set(Object.keys(MOOD_MAP));
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -158,7 +159,8 @@ export async function POST(req: NextRequest) {
       ? Math.max(0, Math.min(body.round, MAX_ROUND))
       : 0;
     const excludeIds = toNumberArray(body.excludeIds, MAX_EXCLUDED_IDS);
-    const result = await generateRecommendations(tasteProfile, moodInput, { round, excludeIds });
+    const watchlistIds = toNumberArray(body.watchlistIds, MAX_WATCHLIST_IDS);
+    const result = await generateRecommendations(tasteProfile, moodInput, { round, excludeIds, watchlistIds });
     return NextResponse.json(result);
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unknown error";

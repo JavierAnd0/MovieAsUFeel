@@ -10,6 +10,8 @@ export type RecommendedMovie = {
   score: number;
   tmdbUrl: string;
   alreadySeen: boolean;
+  /** On the user's list (saved in the app or on their Letterboxd watchlist). */
+  onWatchlist?: boolean;
 };
 
 export type RecommendationsResponse = {

@@ -2,7 +2,7 @@ import { discoverMovies, getGenreList, getMovieDetail, getMovieRecommendations, 
 import { MOOD_MAP } from "@/lib/mood/moodMap";
 import { KEYWORD_LABEL, mergeMoodProfiles, type MoodProfile } from "@/lib/mood/moodProfile";
 import { analyzeText } from "@/lib/mood/textAnalyzer";
-import { analyzeTextWithAI } from "@/lib/mood/aiTextAnalyzer";
+import { analyzeTextWithAI, hasTextModel } from "@/lib/mood/aiTextAnalyzer";
 import { NO_TEXT, resolveTextIntent, type TextBoosts } from "@/lib/mood/textResolver";
 import type { SeedFilm, TasteProfile } from "@/types/letterboxd";
 import type { MoodInput } from "@/types/mood";
@@ -36,6 +36,11 @@ const RESULTS_SEEN = 8;
 const MIN_VOTES = 80;
 /** Niche requests ("terror analógico") live among little-voted films. */
 const MIN_VOTES_TEXT = 15;
+/** How much of the user's list is considered per request (most recent first). */
+const WATCHLIST_MAX = 60;
+const WATCHLIST_SEEDS = 2;
+/** A film the user already wants to watch gets this nudge when it fits. */
+const WATCHLIST_BONUS = 0.08;
 
 const clamp01 = (n: number) => Math.max(0, Math.min(1, n));
 
@@ -43,6 +48,7 @@ type Candidate = {
   movie: TMDBMovie;
   seeds: SeedFilm[];         // seeds whose recommendations include this film
   fromKeywords: boolean;     // came from the mood-keyword query
+  onWatchlist: boolean;      // on the user's own list
   keywordHits?: number[];    // mood keywords confirmed on the film (after details load)
   // How the film relates to the user's free text
   text: { example: boolean; keywordSource: boolean; similarTo?: string; person?: string };
@@ -58,6 +64,8 @@ export type GenerateOptions = {
   round?: number;
   /** Movies already shown to the user, never returned again. */
   excludeIds?: number[];
+  /** Films on the user's list (saved in the app or on their Letterboxd watchlist). */
+  watchlistIds?: number[];
 };
 
 // ─── Mood ───────────────────────────────────────────────────────────────────
@@ -78,14 +86,16 @@ function moodGenreFit(genreIds: number[], mood: MoodProfile): number {
 function moodScore(c: Candidate, mood: MoodProfile): number {
   const genre = (moodGenreFit(c.movie.genre_ids, mood) + 1) / 2;
 
-  // Before details load, having surfaced through the keyword query is the only hint of tone.
+  // Many films carry few or no tone keywords on TMDB, so a missing keyword is
+  // weak evidence against a film; a matching one is strong evidence for it.
+  // Before details load, surfacing through the keyword query is the only hint.
   if (c.keywordHits === undefined) {
-    return clamp01(0.6 * genre + (c.fromKeywords ? 0.28 : 0));
+    return clamp01(0.7 * genre + (c.fromKeywords ? 0.2 : 0));
   }
 
   const hits = c.keywordHits.length;
-  const keyword = hits === 0 ? 0 : hits === 1 ? 0.6 : hits === 2 ? 0.85 : 1;
-  let score = 0.5 * genre + 0.5 * keyword;
+  const keyword = hits === 1 ? 0.6 : hits === 2 ? 0.85 : 1;
+  let score = hits === 0 ? 0.7 * genre : 0.5 * genre + 0.5 * keyword;
 
   if (mood.idealRuntime && c.runtime && c.runtime > mood.idealRuntime.max) {
     score -= Math.min(0.25, (c.runtime - mood.idealRuntime.max) / 120);
@@ -196,7 +206,7 @@ async function analyzeFreeText(freeText?: string): Promise<TextBoosts> {
   if (cached && Date.now() - cached.at < TEXT_CACHE_TTL_MS) return cached.boosts;
 
   const rules = analyzeText(freeText);
-  if (process.env.OPENROUTER_API_KEY) {
+  if (hasTextModel()) {
     try {
       const ai = await analyzeTextWithAI(freeText);
       // The rule-based themes are few but dependable; keep them alongside the model's
@@ -242,23 +252,43 @@ function pickDiscoverGenres(mood: MoodProfile, affinity: Map<number, number>, ex
   return [...fixed, ...byFit].slice(0, 3);
 }
 
+/** List data for the user's list, newest first; details are cached, so this is cheap after the first time. */
+async function loadWatchlistFilms(ids: number[]): Promise<TMDBMovie[]> {
+  const films: TMDBMovie[] = [];
+  const wanted = [...new Set(ids)].slice(0, WATCHLIST_MAX);
+  for (let i = 0; i < wanted.length; i += 20) {
+    const batch = await Promise.all(
+      wanted.slice(i, i + 20).map((id) =>
+        // With keywords: the finalist pass asks for the same thing, and gets it from cache
+        getMovieDetail(id, true)
+          .then((d): TMDBMovie => ({ ...d, genre_ids: d.genres.map((g) => g.id) }))
+          .catch(() => null),
+      ),
+    );
+    films.push(...batch.filter((m): m is TMDBMovie => m !== null));
+  }
+  return films;
+}
+
 async function retrieveCandidates(
   profile: TasteProfile,
   mood: MoodProfile,
   text: TextBoosts,
   discoverGenres: number[],
   round: number,
+  watchlistIds: number[],
 ): Promise<Map<number, Candidate>> {
   const candidates = new Map<number, Candidate>();
-  type Source = { seed?: SeedFilm; keywords?: boolean; text?: Partial<Candidate["text"]> };
+  type Source = { seed?: SeedFilm; keywords?: boolean; watchlist?: boolean; text?: Partial<Candidate["text"]> };
   const add = (movie: TMDBMovie, from: Source) => {
     const existing: Candidate = candidates.get(movie.id) ?? {
-      movie, seeds: [], fromKeywords: false,
+      movie, seeds: [], fromKeywords: false, onWatchlist: false,
       text: { example: false, keywordSource: false },
       score: 0, parts: { taste: 0, mood: 0, quality: 0, text: 0 },
     };
     if (from.seed) existing.seeds.push(from.seed);
     if (from.keywords) existing.fromKeywords = true;
+    if (from.watchlist) existing.onWatchlist = true;
     if (from.text) existing.text = { ...existing.text, ...from.text };
     candidates.set(movie.id, existing);
   };
@@ -278,7 +308,20 @@ async function retrieveCandidates(
   // Explicitly requested genres must hold for the keyword query too
   const explicitGenres = text.genreIds.length > 0 ? { with_genres: text.genreIds.slice(0, 2).join("|") } : {};
 
-  const { seeds, page: seedPage } = pickSeeds(profile, mood, round);
+  const { seeds: tasteSeeds, page: seedPage } = pickSeeds(profile, mood, round);
+
+  // e. The user's own list: films they already want to watch are the best
+  //    possible pick when they fit tonight. The two that suit the mood best
+  //    also act as weak seeds ("more like this"), since the user chose them.
+  const listFilms = await loadWatchlistFilms(watchlistIds);
+  listFilms.forEach((m) => add(m, { watchlist: true }));
+  const listSeeds: SeedFilm[] = round === 0
+    ? [...listFilms]
+        .sort((a, b) => moodGenreFit(b.genre_ids, mood) - moodGenreFit(a.genre_ids, mood))
+        .slice(0, WATCHLIST_SEEDS)
+        .map((m) => ({ tmdbId: m.id, title: m.title, rating: 3.5, genreIds: m.genre_ids, fromWatchlist: true }))
+    : [];
+  const seeds = [...tasteSeeds, ...listSeeds];
 
   // d. What the user asked for in words. These queries ignore the mood's genres:
   //    "terror analógico" on a tired night still means analog horror.
@@ -340,10 +383,16 @@ function passesHardFilters(c: Candidate, text: TextBoosts, excluded: Set<number>
   const { movie } = c;
   if (excluded.has(movie.id)) return false;
   if (text.similarTo.some((m) => m.id === movie.id)) return false;
-  const fromText = c.text.example || c.text.keywordSource || !!c.text.person;
-  if (!movie.release_date || movie.vote_count < (fromText ? MIN_VOTES_TEXT : MIN_VOTES)) return false;
-  // Matching the request doesn't excuse a film almost nobody liked
-  if (fromText && !c.text.example && movie.vote_average < 5.5) return false;
+  if (!movie.release_date) return false;
+  if (c.onWatchlist) {
+    // The user chose it, so votes don't matter — but it has to be out already
+    if (movie.release_date > new Date().toISOString().slice(0, 10)) return false;
+  } else {
+    const fromText = c.text.example || c.text.keywordSource || !!c.text.person;
+    if (movie.vote_count < (fromText ? MIN_VOTES_TEXT : MIN_VOTES)) return false;
+    // Matching the request doesn't excuse a film almost nobody liked
+    if (fromText && !c.text.example && movie.vote_average < 5.5) return false;
+  }
   if (movie.genre_ids.some((id) => text.excludeGenreIds.includes(id))) return false;
 
   const o = text.overrides;
@@ -398,8 +447,12 @@ function buildBlurb(c: Candidate, genreNames: Map<number, string>, affinity: Map
   else if (c.text.example || (c.textKeywordHits ?? 0) > 0) parts.push(request ? `Coincide con «${request}»` : "Coincide con lo que pediste");
   else if (c.text.similarTo) parts.push(`Parecida a ${c.text.similarTo}`);
 
+  if (c.onWatchlist) parts.push("Está en tu lista");
+
   const seed = [...c.seeds].sort((a, b) => b.rating - a.rating)[0];
-  if (seed) {
+  if (seed?.fromWatchlist) {
+    parts.push(`Parecida a ${seed.title}, que tienes en tu lista`);
+  } else if (seed) {
     parts.push(`Porque te gustó ${seed.title}`);
   } else {
     const favourite = [...c.movie.genre_ids]
@@ -440,6 +493,7 @@ function toRecommendedMovie(
     score: Math.round(c.score * 100),
     tmdbUrl: tmdbMovieUrl(movie.id),
     alreadySeen,
+    onWatchlist: c.onWatchlist,
   };
 }
 
@@ -448,7 +502,7 @@ function toRecommendedMovie(
 export async function generateRecommendations(
   tasteProfile: TasteProfile,
   moodInput: MoodInput,
-  { round = 0, excludeIds = [] }: GenerateOptions = {}
+  { round = 0, excludeIds = [], watchlistIds = [] }: GenerateOptions = {}
 ): Promise<RecommendationsResponse> {
   const [genreList, text] = await Promise.all([getGenreList(), analyzeFreeText(moodInput.freeText)]);
   const genreNames = new Map<number, string>(genreList.map((g) => [g.id, g.name]));
@@ -466,7 +520,7 @@ export async function generateRecommendations(
   const maxAffinity = Math.max(...affinity.values(), 0.1);
   const discoverGenres = pickDiscoverGenres(mood, affinity, text.genreIds);
 
-  const retrieved = await retrieveCandidates(tasteProfile, mood, text, discoverGenres, round);
+  const retrieved = await retrieveCandidates(tasteProfile, mood, text, discoverGenres, round, watchlistIds);
 
   const excluded = new Set(excludeIds);
   const watched = new Set(tasteProfile.watchedTmdbIds);
@@ -480,7 +534,8 @@ export async function generateRecommendations(
     const textFit = textScore(c, text);
 
     let score = WEIGHTS.taste * taste + WEIGHTS.mood * moodFit + WEIGHTS.quality * quality
-      - mainstreamPenalty(c.movie, tasteProfile);
+      - mainstreamPenalty(c.movie, tasteProfile)
+      + (c.onWatchlist ? WATCHLIST_BONUS : 0);
 
     // What the user asked for in words outranks what we inferred. A specific
     // request takes a fixed share of the score; a generic one is a small bonus.
@@ -506,8 +561,11 @@ export async function generateRecommendations(
     ...list.filter((c) => answersRequest(c, text)),
     ...list.filter((c) => !answersRequest(c, text)),
   ];
+  const unseenPool = byRelevance(candidates.filter((c) => !watched.has(c.movie.id)));
   const finalists = [
-    ...byRelevance(candidates.filter((c) => !watched.has(c.movie.id))).slice(0, FINALISTS_UNSEEN),
+    ...unseenPool.slice(0, FINALISTS_UNSEEN),
+    // The user's list always gets a full look: its details are already cached
+    ...unseenPool.slice(FINALISTS_UNSEEN).filter((c) => c.onWatchlist),
     ...byRelevance(candidates.filter((c) => watched.has(c.movie.id))).slice(0, FINALISTS_SEEN),
   ];
 

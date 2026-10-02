@@ -64,12 +64,26 @@ export async function searchPerson(query: string): Promise<TMDBPerson[]> {
   return data.results;
 }
 
+// Film details barely change, and the same films come up again and again
+// (the user's list, popular finalists). Remembering them saves TMDB calls.
+const DETAIL_TTL_MS = 6 * 60 * 60 * 1000;
+const DETAIL_CACHE_MAX = 3000;
+const detailCache = new Map<string, { at: number; detail: Promise<TMDBMovieDetail> }>();
+
 /** Core facts about one film. `withKeywords` also loads its TMDB keywords. */
-export async function getMovieDetail(id: number, withKeywords = false): Promise<TMDBMovieDetail> {
-  return tmdbFetch<TMDBMovieDetail>(`/movie/${id}`, {
+export function getMovieDetail(id: number, withKeywords = false): Promise<TMDBMovieDetail> {
+  const key = `${id}:${withKeywords ? "k" : ""}`;
+  const cached = detailCache.get(key);
+  if (cached && Date.now() - cached.at < DETAIL_TTL_MS) return cached.detail;
+
+  const detail = tmdbFetch<TMDBMovieDetail>(`/movie/${id}`, {
     language: "es-ES",
     ...(withKeywords ? { append_to_response: "keywords" } : {}),
   });
+  if (detailCache.size >= DETAIL_CACHE_MAX) detailCache.delete(detailCache.keys().next().value!);
+  detailCache.set(key, { at: Date.now(), detail });
+  detail.catch(() => detailCache.delete(key)); // never remember a failure
+  return detail;
 }
 
 /** "People who liked this also liked…" — TMDB's own collaborative filtering. */

@@ -88,7 +88,11 @@ export async function fetchRecommendations(
   profile: TasteProfile,
   moods: MoodCategory[],
   freeText: string,
-  { round = 0, excludeIds = [] }: { round?: number; excludeIds?: number[] } = {}
+  {
+    round = 0,
+    excludeIds = [],
+    watchlistIds = [],
+  }: { round?: number; excludeIds?: number[]; watchlistIds?: number[] } = {}
 ): Promise<RecommendationsResponse> {
   let res: Response;
   try {
@@ -100,6 +104,7 @@ export async function fetchRecommendations(
         moodInput: { categories: moods, freeText: freeText.trim() || undefined },
         round,
         excludeIds,
+        watchlistIds,
       }),
     });
   } catch {

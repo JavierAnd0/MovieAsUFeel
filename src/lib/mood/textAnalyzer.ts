@@ -227,17 +227,17 @@ const OVERRIDE_RULES: OverrideRule[] = [
   },
   // 80s
   {
-    patterns: ["80s", "años 80", "ochenta", "1980"],
+    patterns: ["80s", "años 80", "los 80", "ochenta", "1980"],
     overrides: { "primary_release_date.gte": "1980-01-01", "primary_release_date.lte": "1989-12-31" },
   },
   // 90s
   {
-    patterns: ["90s", "años 90", "noventa", "1990"],
+    patterns: ["90s", "años 90", "los 90", "noventa", "1990"],
     overrides: { "primary_release_date.gte": "1990-01-01", "primary_release_date.lte": "1999-12-31" },
   },
   // 2000s
   {
-    patterns: ["2000s", "años 2000", "dos mil"],
+    patterns: ["2000s", "años 2000", "los 2000", "dos mil"],
     overrides: { "primary_release_date.gte": "2000-01-01", "primary_release_date.lte": "2009-12-31" },
   },
   // HIGH QUALITY / Award films
