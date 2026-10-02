@@ -16,6 +16,7 @@ import {
   type StoredResults,
 } from "@/lib/client/session";
 import { gel } from "@/lib/mood/moodColors";
+import { getWatchlistIds } from "@/lib/client/watchlist";
 import type { TasteProfile } from "@/types/letterboxd";
 import type { RecommendedMovie } from "@/types/recommendation";
 
@@ -62,7 +63,7 @@ function ResultsView() {
         const profile = draft?.profile && draft.profile.username.toLowerCase() === query.username.toLowerCase()
           ? draft.profile
           : await fetchProfile(query.username);
-        const result = await fetchRecommendations(profile, query.moods, query.freeText);
+        const result = await fetchRecommendations(profile, query.moods, query.freeText, { watchlistIds: getWatchlistIds() });
         if (cancelled) return;
         const data: StoredResults = { ...query, username: profile.username, profile, result, round: 0 };
         writeSession(RESULTS_STORAGE_KEY, data);
@@ -92,6 +93,7 @@ function ResultsView() {
       const result = await fetchRecommendations(data.profile, data.moods, data.freeText, {
         round,
         excludeIds: data.result.movies.map(m => m.tmdbId),
+        watchlistIds: getWatchlistIds(),
       });
       if (!result.movies.some(m => !m.alreadySeen)) {
         setNotice("No quedan más películas nuevas para esta combinación. Prueba con otro estado de ánimo.");
